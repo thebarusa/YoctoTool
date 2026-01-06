@@ -10,7 +10,7 @@ import sys
 class YoctoBuilderApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Yocto Tool v11 (Wi-Fi Support)")
+        self.root.title("Yocto Tool v14 (Fix Extra Space Issue)")
         self.root.geometry("900x950")
 
         # --- Variables ---
@@ -52,7 +52,7 @@ class YoctoBuilderApp:
 
         self.create_widgets()
         self.log(f"Tool running as root. Build user: {self.sudo_user}")
-        self.toggle_wifi_fields() # Initialize state
+        self.toggle_wifi_fields()
 
     def create_widgets(self):
         # --- Section 1: Setup ---
@@ -111,42 +111,35 @@ class YoctoBuilderApp:
         ttk.Checkbutton(tab_rpi, text="Enable UART Console", variable=self.rpi_enable_uart).grid(row=1, column=0, padx=10, pady=5, sticky="w")
         ttk.Checkbutton(tab_rpi, text="Accept Commercial Licenses", variable=self.license_commercial).grid(row=2, column=0, padx=10, pady=5, sticky="w")
         
-        # --- Wi-Fi Section ---
+        # Wi-Fi
         ttk.Checkbutton(tab_rpi, text="Enable Wi-Fi Configuration", variable=self.rpi_enable_wifi, command=self.toggle_wifi_fields).grid(row=3, column=0, padx=10, pady=10, sticky="w")
         
         self.frame_wifi = ttk.Frame(tab_rpi)
         self.frame_wifi.grid(row=4, column=0, columnspan=2, padx=20, pady=0, sticky="w")
-        
         ttk.Label(self.frame_wifi, text="SSID:").pack(side="left")
         ttk.Entry(self.frame_wifi, textvariable=self.wifi_ssid, width=20).pack(side="left", padx=5)
-        
         ttk.Label(self.frame_wifi, text="Password:").pack(side="left", padx=5)
         ttk.Entry(self.frame_wifi, textvariable=self.wifi_password, width=20, show="*").pack(side="left", padx=5)
 
-        # --- Config Buttons ---
+        # Buttons
         frame_cfg_btns = ttk.Frame(frame_config)
         frame_cfg_btns.pack(pady=10)
-        
         ttk.Button(frame_cfg_btns, text="LOAD CONFIG", command=self.load_config).pack(side="left", padx=10)
         ttk.Button(frame_cfg_btns, text="SAVE CONFIG", command=self.save_config).pack(side="left", padx=10)
 
         # --- Section 3: Build Actions ---
         frame_build = ttk.LabelFrame(self.root, text="3. Build Actions")
         frame_build.pack(fill="x", padx=10, pady=5)
-        
         f_build_btns = ttk.Frame(frame_build)
         f_build_btns.pack(pady=10)
-        
         ttk.Button(f_build_btns, text="START BUILD", command=self.start_build_thread).pack(side="left", padx=20)
         ttk.Button(f_build_btns, text="CLEAN BUILD", command=self.start_clean_thread).pack(side="left", padx=20)
 
         # --- Section 4: Flash ---
         frame_flash = ttk.LabelFrame(self.root, text="4. Flash to SD Card")
         frame_flash.pack(fill="x", padx=10, pady=5)
-        
         self.drive_menu = ttk.Combobox(frame_flash, textvariable=self.selected_drive, width=40, state="readonly")
         self.drive_menu.pack(side="left", padx=10, pady=15)
-        
         ttk.Button(frame_flash, text="Refresh Drives", command=self.scan_drives).pack(side="left", padx=5)
         self.btn_flash = ttk.Button(frame_flash, text="FORMAT & FLASH", command=self.flash_image)
         self.btn_flash.pack(side="left", padx=20)
@@ -175,13 +168,10 @@ class YoctoBuilderApp:
         return os.path.join(self.poky_path.get(), self.build_dir_name.get(), "conf", "local.conf")
 
     def toggle_wifi_fields(self):
-        """Show or hide Wi-Fi inputs based on checkbox"""
-        if self.rpi_enable_wifi.get():
-            self.frame_wifi.grid() # Show
-        else:
-            self.frame_wifi.grid_remove() # Hide
+        if self.rpi_enable_wifi.get(): self.frame_wifi.grid()
+        else: self.frame_wifi.grid_remove()
 
-    # --- LOGIC: LOAD CONFIG ---
+    # --- LOAD CONFIG ---
     def load_config(self):
         conf = self.get_conf_path()
         if not os.path.exists(conf):
@@ -191,39 +181,34 @@ class YoctoBuilderApp:
         try:
             with open(conf, 'r') as f: content = f.read()
             
-            # Basic
             m = re.search(r'^\s*MACHINE\s*\?{0,2}=\s*"(.*?)"', content, re.MULTILINE)
             if m: self.machine_var.set(m.group(1))
 
             m = re.search(r'^\s*PACKAGE_CLASSES\s*\?{0,2}=\s*"(.*?)"', content, re.MULTILINE)
             if m: self.pkg_format_var.set(m.group(1).split()[0])
 
-            # Features
             self.feat_debug_tweaks.set("debug-tweaks" in content)
             self.feat_ssh_server.set("ssh-server-openssh" in content or "openssh" in content)
             self.feat_tools_debug.set("tools-debug" in content)
 
-            # RPi
             self.rpi_usb_gadget.set("dtoverlay=dwc2" in content)
             self.rpi_enable_uart.set('ENABLE_UART = "1"' in content)
             self.license_commercial.set("commercial" in content)
             
-            # Wi-Fi
-            wifi_ssid_match = re.search(r'^\s*WIFI_SSID\s*=\s*"(.*?)"', content, re.MULTILINE)
-            if wifi_ssid_match:
+            wssid = re.search(r'^\s*WIFI_SSID\s*=\s*"(.*?)"', content, re.MULTILINE)
+            if wssid:
                 self.rpi_enable_wifi.set(True)
-                self.wifi_ssid.set(wifi_ssid_match.group(1))
-                # Try to find password
-                wifi_pass_match = re.search(r'^\s*WIFI_PASSWORD\s*=\s*"(.*?)"', content, re.MULTILINE)
-                if wifi_pass_match: self.wifi_password.set(wifi_pass_match.group(1))
+                self.wifi_ssid.set(wssid.group(1))
+                wpass = re.search(r'^\s*WIFI_PASSWORD\s*=\s*"(.*?)"', content, re.MULTILINE)
+                if wpass: self.wifi_password.set(wpass.group(1))
             else:
                 self.rpi_enable_wifi.set(False)
 
-            self.toggle_wifi_fields() # Refresh UI
+            self.toggle_wifi_fields()
             self.log(f"Config loaded from {conf}")
         except Exception as e: messagebox.showerror("Error", str(e))
 
-    # --- LOGIC: SAVE CONFIG ---
+    # --- SAVE CONFIG (FIXED SPACE ISSUE) ---
     def save_config(self):
         conf = self.get_conf_path()
         if not os.path.exists(conf): return
@@ -231,70 +216,77 @@ class YoctoBuilderApp:
         try:
             with open(conf, 'r') as f: lines = f.readlines()
             
-            new_lines = []
-            updated_vars = {"MACHINE": False, "PACKAGE_CLASSES": False, "ENABLE_UART": False}
+            clean_lines = []
+            skip_block = False
 
+            # --- STEP 1: CLEAN ORPHANS ---
             for line in lines:
-                skip = False
-                if re.match(r'^\s*MACHINE\s*\?{0,2}=', line):
-                    new_lines.append(f'MACHINE ??= "{self.machine_var.get()}"\n')
-                    updated_vars["MACHINE"] = True
-                    skip = True
-                elif re.match(r'^\s*PACKAGE_CLASSES\s*\?{0,2}=', line):
-                    new_lines.append(f'PACKAGE_CLASSES ?= "{self.pkg_format_var.get()}"\n')
-                    updated_vars["PACKAGE_CLASSES"] = True
-                    skip = True
-                elif re.match(r'^\s*ENABLE_UART\s*=', line):
-                    val = "1" if self.rpi_enable_uart.get() else "0"
-                    new_lines.append(f'ENABLE_UART = "{val}"\n')
-                    updated_vars["ENABLE_UART"] = True
-                    skip = True
-                
-                if "# --- YOCTO TOOL AUTO CONFIG START" in line: skip = True
-                if "# --- YOCTO TOOL AUTO CONFIG END" in line: skip = True
-                
-                if not skip: new_lines.append(line)
+                if "# --- YOCTO TOOL AUTO CONFIG START" in line:
+                    skip_block = True
+                    continue
+                if "# --- YOCTO TOOL AUTO CONFIG END" in line:
+                    skip_block = False
+                    continue
+                if skip_block:
+                    continue
 
-            # Append New Block
-            new_lines.append("\n# --- YOCTO TOOL AUTO CONFIG START ---\n")
+                if "RPI_EXTRA_CONFIG" in line and "dtoverlay=dwc2" in line: continue
+                if "KERNEL_MODULE_AUTOLOAD" in line and "dwc2 g_ether" in line: continue
+                if "WIFI_SSID" in line or "WIFI_PASSWORD" in line: continue
+                if "LICENSE_FLAGS_ACCEPTED" in line and "synaptics-killswitch" in line: continue
+                if "ENABLE_UART" in line: continue
+                if re.match(r'^\s*MACHINE\s*\?{0,2}=', line): continue
+                if re.match(r'^\s*PACKAGE_CLASSES\s*\?{0,2}=', line): continue
+
+                clean_lines.append(line)
+
+            # --- STEP 2: WRITE NEW CONFIG ---
             
+            if clean_lines and not clean_lines[-1].endswith('\n'):
+                clean_lines[-1] += '\n'
+
+            clean_lines.append(f'MACHINE ??= "{self.machine_var.get()}"\n')
+            clean_lines.append(f'PACKAGE_CLASSES ?= "{self.pkg_format_var.get()}"\n')
+            
+            clean_lines.append("\n# --- YOCTO TOOL AUTO CONFIG START ---\n")
+            
+            val = "1" if self.rpi_enable_uart.get() else "0"
+            clean_lines.append(f'ENABLE_UART = "{val}"\n')
+
             if self.init_system_var.get() == "systemd":
-                new_lines.append('DISTRO_FEATURES:append = " systemd"\n')
-                new_lines.append('VIRTUAL-RUNTIME_init_manager = "systemd"\n')
-            
+                clean_lines.append('DISTRO_FEATURES:append = " systemd"\n')
+                clean_lines.append('VIRTUAL-RUNTIME_init_manager = "systemd"\n')
+
             features = []
             if self.feat_debug_tweaks.get(): features.append("debug-tweaks")
             if self.feat_ssh_server.get(): features.append("ssh-server-openssh")
             if self.feat_tools_debug.get(): features.append("tools-debug")
             if features:
-                new_lines.append(f'EXTRA_IMAGE_FEATURES ?= "{" ".join(features)}"\n')
+                clean_lines.append(f'EXTRA_IMAGE_FEATURES ?= "{" ".join(features)}"\n')
 
             if self.license_commercial.get():
-                new_lines.append('LICENSE_FLAGS_ACCEPTED:append = " commercial synaptics-killswitch"\n')
+                clean_lines.append('LICENSE_FLAGS_ACCEPTED:append = " commercial synaptics-killswitch"\n')
 
             if self.rpi_usb_gadget.get():
-                new_lines.append('# Enable USB OTG/Gadget Mode\n')
-                new_lines.append('RPI_EXTRA_CONFIG:append = " dtoverlay=dwc2"\n')
-                new_lines.append('KERNEL_MODULE_AUTOLOAD += "dwc2 g_ether"\n')
-                new_lines.append('IMAGE_INSTALL:append = " kernel-module-dwc2 kernel-module-g-ether"\n')
-            
-            # Wi-Fi Configuration
+                clean_lines.append('# Enable USB OTG/Gadget Mode\n')
+                # FIX: Removed space before dtoverlay
+                clean_lines.append('RPI_EXTRA_CONFIG:append = "dtoverlay=dwc2"\n')
+                clean_lines.append('KERNEL_MODULE_AUTOLOAD += "dwc2 g_ether"\n')
+                clean_lines.append('IMAGE_INSTALL:append = " kernel-module-dwc2 kernel-module-g-ether"\n')
+
             if self.rpi_enable_wifi.get():
-                new_lines.append('# Wi-Fi Config (Install firmware & define vars)\n')
-                new_lines.append('IMAGE_INSTALL:append = " wpa-supplicant linux-firmware-rpidistro-bcm43430"\n')
-                new_lines.append(f'WIFI_SSID = "{self.wifi_ssid.get()}"\n')
-                new_lines.append(f'WIFI_PASSWORD = "{self.wifi_password.get()}"\n')
+                clean_lines.append('# Wi-Fi Config\n')
+                clean_lines.append('IMAGE_INSTALL:append = " wpa-supplicant linux-firmware-rpidistro-bcm43430"\n')
+                clean_lines.append(f'WIFI_SSID = "{self.wifi_ssid.get()}"\n')
+                clean_lines.append(f'WIFI_PASSWORD = "{self.wifi_password.get()}"\n')
 
-            if not updated_vars["MACHINE"]: new_lines.append(f'MACHINE ??= "{self.machine_var.get()}"\n')
-            if not updated_vars["PACKAGE_CLASSES"]: new_lines.append(f'PACKAGE_CLASSES ?= "{self.pkg_format_var.get()}"\n')
-            if not updated_vars["ENABLE_UART"]: new_lines.append(f'ENABLE_UART = "{"1" if self.rpi_enable_uart.get() else "0"}"\n')
+            clean_lines.append("# --- YOCTO TOOL AUTO CONFIG END ---\n")
 
-            new_lines.append("# --- YOCTO TOOL AUTO CONFIG END ---\n")
-
-            with open(conf, 'w') as f: f.writelines(new_lines)
+            with open(conf, 'w') as f:
+                f.writelines(clean_lines)
             
-            self.log("Configuration saved to local.conf")
-            messagebox.showinfo("Success", "Configuration Updated!")
+            self.log("Configuration saved (Space issue fixed).")
+            messagebox.showinfo("Success", "Configuration Fixed & Updated!")
             
         except Exception as e: messagebox.showerror("Error", str(e))
 
