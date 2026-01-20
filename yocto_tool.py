@@ -7,6 +7,7 @@ import threading
 import glob
 import sys
 import shlex
+import manager_rpi
 
 class YoctoBuilderApp:
     def __init__(self, root):
@@ -41,19 +42,12 @@ class YoctoBuilderApp:
         self.feat_ssh_server = tk.BooleanVar(value=True)
         self.feat_tools_debug = tk.BooleanVar(value=False)
         
-        # RPi Specific
-        self.rpi_usb_gadget = tk.BooleanVar(value=False)
-        self.rpi_enable_uart = tk.BooleanVar(value=True)
-        self.license_commercial = tk.BooleanVar(value=True)
-        
-        # RPi Wi-Fi
-        self.rpi_enable_wifi = tk.BooleanVar(value=False)
-        self.wifi_ssid = tk.StringVar()
-        self.wifi_password = tk.StringVar()
+        # RPi Manager
+        self.rpi_manager = manager_rpi.RpiManager(self)
 
         self.create_widgets()
         self.log(f"Tool running as root. Build user: {self.sudo_user}")
-        self.toggle_wifi_fields()
+        self.log(f"Tool running as root. Build user: {self.sudo_user}")
 
     def create_widgets(self):
         self._setup_path_section()
@@ -82,13 +76,23 @@ class YoctoBuilderApp:
         
         self._create_basic_tab(notebook)
         self._create_features_tab(notebook)
-        self._create_rpi_tab(notebook)
-
+        self.rpi_manager.create_tab(notebook)
+        
         # Buttons
         frame_cfg_btns = ttk.Frame(frame_config)
         frame_cfg_btns.pack(pady=10)
-        ttk.Button(frame_cfg_btns, text="LOAD CONFIG", command=self.load_config).pack(side="left", padx=10)
-        ttk.Button(frame_cfg_btns, text="SAVE CONFIG", command=self.save_config).pack(side="left", padx=10)
+        self.btn_load = ttk.Button(frame_cfg_btns, text="LOAD CONFIG", command=self.load_config)
+        self.btn_load.pack(side="left", padx=10)
+        self.btn_save = ttk.Button(frame_cfg_btns, text="SAVE CONFIG", command=self.save_config)
+        self.btn_save.pack(side="left", padx=10)
+        
+        # Initial visibility check
+        self.update_ui_visibility()
+
+    def update_ui_visibility(self, event=None):
+        machine = self.machine_var.get()
+        is_rpi = "raspberrypi" in machine
+        self.rpi_manager.set_visible(is_rpi)
 
     def _create_basic_tab(self, notebook):
         tab_basic = ttk.Frame(notebook)
@@ -98,6 +102,7 @@ class YoctoBuilderApp:
         self.machine_combo = ttk.Combobox(tab_basic, textvariable=self.machine_var, 
                                           values=["raspberrypi0-wifi", "raspberrypi3", "raspberrypi4", "qemux86-64"], width=30)
         self.machine_combo.grid(row=0, column=1, padx=10, pady=10, sticky="w")
+        self.machine_combo.bind("<<ComboboxSelected>>", self.update_ui_visibility)
 
         ttk.Label(tab_basic, text="IMAGE TARGET:").grid(row=1, column=0, padx=10, pady=10, sticky="e")
         self.image_combo = ttk.Combobox(tab_basic, textvariable=self.image_var, 
@@ -121,24 +126,7 @@ class YoctoBuilderApp:
         ttk.Checkbutton(f_checks, text="ssh-server-openssh", variable=self.feat_ssh_server).pack(anchor="w")
         ttk.Checkbutton(f_checks, text="tools-debug", variable=self.feat_tools_debug).pack(anchor="w")
 
-    def _create_rpi_tab(self, notebook):
-        tab_rpi = ttk.Frame(notebook)
-        notebook.add(tab_rpi, text="Raspberry Pi Options")
-        
-        ttk.Checkbutton(tab_rpi, text="Enable USB Gadget Mode (SSH over USB)", variable=self.rpi_usb_gadget).grid(row=0, column=0, padx=10, pady=5, sticky="w")
-        ttk.Label(tab_rpi, text="(Adds 'dtoverlay=dwc2' & 'modules-load=dwc2,g_ether')").grid(row=0, column=1, sticky="w")
-        
-        ttk.Checkbutton(tab_rpi, text="Enable UART Console", variable=self.rpi_enable_uart).grid(row=1, column=0, padx=10, pady=5, sticky="w")
-        ttk.Checkbutton(tab_rpi, text="Accept Commercial Licenses", variable=self.license_commercial).grid(row=2, column=0, padx=10, pady=5, sticky="w")
-        
-        ttk.Checkbutton(tab_rpi, text="Enable Wi-Fi Configuration", variable=self.rpi_enable_wifi, command=self.toggle_wifi_fields).grid(row=3, column=0, padx=10, pady=10, sticky="w")
-        
-        self.frame_wifi = ttk.Frame(tab_rpi)
-        self.frame_wifi.grid(row=4, column=0, columnspan=2, padx=20, pady=0, sticky="w")
-        ttk.Label(self.frame_wifi, text="SSID:").pack(side="left")
-        ttk.Entry(self.frame_wifi, textvariable=self.wifi_ssid, width=20).pack(side="left", padx=5)
-        ttk.Label(self.frame_wifi, text="Password:").pack(side="left", padx=5)
-        ttk.Entry(self.frame_wifi, textvariable=self.wifi_password, width=20, show="*").pack(side="left", padx=5)
+
 
     def _setup_operations_section(self):
         # Combined Operations Frame
@@ -151,8 +139,10 @@ class YoctoBuilderApp:
         
         f_build_btns = ttk.Frame(frame_build)
         f_build_btns.pack(pady=15, padx=10)
-        ttk.Button(f_build_btns, text="START BUILD", command=self.start_build_thread).pack(side="left", padx=10)
-        ttk.Button(f_build_btns, text="CLEAN BUILD", command=self.start_clean_thread).pack(side="left", padx=10)
+        self.btn_build = ttk.Button(f_build_btns, text="START BUILD", command=self.start_build_thread)
+        self.btn_build.pack(side="left", padx=10)
+        self.btn_clean = ttk.Button(f_build_btns, text="CLEAN BUILD", command=self.start_clean_thread)
+        self.btn_clean.pack(side="left", padx=10)
 
         # Right: Flash
         frame_flash = ttk.LabelFrame(frame_ops, text="4. Flash to SD Card")
@@ -200,9 +190,7 @@ class YoctoBuilderApp:
     def get_conf_path(self):
         return os.path.join(self.poky_path.get(), self.build_dir_name.get(), "conf", "local.conf")
 
-    def toggle_wifi_fields(self):
-        if self.rpi_enable_wifi.get(): self.frame_wifi.grid()
-        else: self.frame_wifi.grid_remove()
+
 
     # --- LOAD CONFIG ---
     def load_config(self):
@@ -222,22 +210,10 @@ class YoctoBuilderApp:
 
             self.feat_debug_tweaks.set("debug-tweaks" in content)
             self.feat_ssh_server.set("ssh-server-openssh" in content or "openssh" in content)
-            self.feat_tools_debug.set("tools-debug" in content)
+            self.feat_tools_debug.set("tools-debug" in content)            
+            self.rpi_manager.parse_config(content)
+            self.update_ui_visibility() # Update tabs based on loaded machine
 
-            self.rpi_usb_gadget.set("dtoverlay=dwc2" in content)
-            self.rpi_enable_uart.set('ENABLE_UART = "1"' in content)
-            self.license_commercial.set("commercial" in content)
-            
-            wssid = re.search(r'^\s*WIFI_SSID\s*=\s*"(.*?)"', content, re.MULTILINE)
-            if wssid:
-                self.rpi_enable_wifi.set(True)
-                self.wifi_ssid.set(wssid.group(1))
-                wpass = re.search(r'^\s*WIFI_PASSWORD\s*=\s*"(.*?)"', content, re.MULTILINE)
-                if wpass: self.wifi_password.set(wpass.group(1))
-            else:
-                self.rpi_enable_wifi.set(False)
-
-            self.toggle_wifi_fields()
             self.log(f"Config loaded from {conf}")
         except Exception as e: messagebox.showerror("Error", str(e))
 
@@ -285,9 +261,6 @@ class YoctoBuilderApp:
             
             clean_lines.append("\n# --- YOCTO TOOL AUTO CONFIG START ---\n")
             
-            val = "1" if self.rpi_enable_uart.get() else "0"
-            clean_lines.append(f'ENABLE_UART = "{val}"\n')
-
             if self.init_system_var.get() == "systemd":
                 clean_lines.append('DISTRO_FEATURES:append = " systemd"\n')
                 clean_lines.append('VIRTUAL-RUNTIME_init_manager = "systemd"\n')
@@ -298,25 +271,13 @@ class YoctoBuilderApp:
             if self.feat_tools_debug.get(): features.append("tools-debug")
             if features:
                 clean_lines.append(f'EXTRA_IMAGE_FEATURES ?= "{" ".join(features)}"\n')
-
-            if self.license_commercial.get():
-                clean_lines.append('LICENSE_FLAGS_ACCEPTED:append = " commercial synaptics-killswitch"\n')
-
+            
             # Only apply RPi specific settings if we are targeting a Raspberry Pi
             is_rpi = "raspberrypi" in self.machine_var.get()
-
-            if is_rpi and self.rpi_usb_gadget.get():
-                clean_lines.append('# Enable USB OTG/Gadget Mode\n')
-                # FIX: Removed space before dtoverlay
-                clean_lines.append('RPI_EXTRA_CONFIG:append = "dtoverlay=dwc2"\n')
-                clean_lines.append('KERNEL_MODULE_AUTOLOAD += "dwc2 g_ether"\n')
-                clean_lines.append('IMAGE_INSTALL:append = " kernel-module-dwc2 kernel-module-g-ether"\n')
-
-            if is_rpi and self.rpi_enable_wifi.get():
-                clean_lines.append('# Wi-Fi Config\n')
-                clean_lines.append('IMAGE_INSTALL:append = " wpa-supplicant linux-firmware-rpidistro-bcm43430"\n')
-                clean_lines.append(f'WIFI_SSID = "{self.wifi_ssid.get()}"\n')
-                clean_lines.append(f'WIFI_PASSWORD = "{self.wifi_password.get()}"\n')
+            
+            if is_rpi:
+                 # 4. Delegate config generation to RpiManager.
+                 clean_lines.extend(self.rpi_manager.get_config_lines())
 
             clean_lines.append("# --- YOCTO TOOL AUTO CONFIG END ---\n")
 
@@ -328,23 +289,40 @@ class YoctoBuilderApp:
             
         except Exception as e: messagebox.showerror("Error", str(e))
 
+    # --- BUSY STATE ---
+    def set_busy_state(self, busy):
+        state = "disabled" if busy else "normal"
+        self.btn_build.config(state=state)
+        self.btn_clean.config(state=state)
+        self.btn_flash.config(state=state)
+        self.btn_load.config(state=state)
+        self.btn_save.config(state=state)
+
     # --- BUILD & FLASH ---
     def start_build_thread(self):
         if not self.poky_path.get(): return
+        self.set_busy_state(True)
         threading.Thread(target=self.run_build).start()
 
     def start_clean_thread(self):
         if not self.poky_path.get(): return
         if messagebox.askyesno("Confirm", "Clean build?"):
+            self.set_busy_state(True)
             threading.Thread(target=self.run_clean).start()
 
     def run_build(self):
-        self.log(f"Building {self.image_var.get()}...")
-        self.exec_user_cmd(f"bitbake {self.image_var.get()}")
+        try:
+            self.log(f"Building {self.image_var.get()}...")
+            self.exec_user_cmd(f"bitbake {self.image_var.get()}")
+        finally:
+            self.root.after(0, self.set_busy_state, False)
 
     def run_clean(self):
-        self.log("Cleaning...")
-        self.exec_user_cmd(f"bitbake -c cleanall {self.image_var.get()}")
+        try:
+            self.log("Cleaning...")
+            self.exec_user_cmd(f"bitbake -c cleanall {self.image_var.get()}")
+        finally:
+            self.root.after(0, self.set_busy_state, False)
 
     def exec_user_cmd(self, cmd):
         # Use shlex for quoting path components to be safe
@@ -396,8 +374,8 @@ class YoctoBuilderApp:
         img = max(files, key=os.path.getctime)
         
         if messagebox.askyesno("Flash", f"Flash {os.path.basename(img)} to {dev}?"):
-            self.btn_flash.config(state="disabled")
-            threading.Thread(target=self.run_flash, args=(img, dev)).start()
+            self.set_busy_state(True)
+            threading.Thread(target=self.run_flash, args=(img, dev)).start() # Fixed: removed btn_flash disabling here, handled in busy state
 
     def run_flash(self, img, dev):
         try:
@@ -427,7 +405,7 @@ class YoctoBuilderApp:
         except Exception as e: 
             self.root.after(0, messagebox.showerror, "Error", str(e))
         finally: 
-            self.root.after(0, lambda: self.btn_flash.config(state="normal"))
+             self.root.after(0, self.set_busy_state, False)
 
 if __name__ == "__main__":
     root = tk.Tk()
