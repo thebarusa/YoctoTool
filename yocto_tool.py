@@ -63,7 +63,9 @@ class YoctoBuilderApp:
         # Grid layout for better alignment
         ttk.Label(frame_setup, text="Poky Path:").grid(row=0, column=0, padx=5, pady=10, sticky="e")
         ttk.Entry(frame_setup, textvariable=self.poky_path, width=60).grid(row=0, column=1, padx=5, pady=10, sticky="ew")
+        ttk.Entry(frame_setup, textvariable=self.poky_path, width=60).grid(row=0, column=1, padx=5, pady=10, sticky="ew")
         ttk.Button(frame_setup, text="Browse", command=self.browse_folder).grid(row=0, column=2, padx=5, pady=10)
+        ttk.Button(frame_setup, text="Download Poky", command=self.open_download_dialog).grid(row=0, column=3, padx=5, pady=10)
         
         frame_setup.columnconfigure(1, weight=1)
 
@@ -406,6 +408,140 @@ class YoctoBuilderApp:
             self.root.after(0, messagebox.showerror, "Error", str(e))
         finally: 
              self.root.after(0, self.set_busy_state, False)
+
+    # --- DOWNLOAD POKY FEATURE ---
+    def open_download_dialog(self):
+        top = tk.Toplevel(self.root)
+        top.title("Download Poky (Yocto Project)")
+        top.geometry("500x350")
+        
+        # Branch Selection
+        ttk.Label(top, text="Select Badge/Branch:").pack(anchor="w", padx=10, pady=(10, 5))
+        branch_var = tk.StringVar(value="Loading...")
+        cb_branch = ttk.Combobox(top, textvariable=branch_var, values=[], state="readonly")
+        cb_branch.pack(fill="x", padx=10)
+        
+        # Start scanning branches in background
+        threading.Thread(target=self.scan_git_branches, args=(cb_branch, branch_var)).start()
+        
+        # Parent Directory Selection
+        ttk.Label(top, text="Select Destination Parent Folder:").pack(anchor="w", padx=10, pady=(10, 5))
+        # Default to current directory as requested
+        dest_var = tk.StringVar(value=os.getcwd())
+        
+        f_dest = ttk.Frame(top)
+        f_dest.pack(fill="x", padx=10)
+        ttk.Entry(f_dest, textvariable=dest_var).pack(side="left", fill="x", expand=True)
+        ttk.Button(f_dest, text="Browse", command=lambda: dest_var.set(filedialog.askdirectory() or dest_var.get())).pack(side="left", padx=5)
+        
+        # Progress
+        self.lbl_dl_status = ttk.Label(top, text="Ready to clone...", foreground="blue")
+        self.lbl_dl_status.pack(pady=(20, 5))
+        
+        self.pb_dl = ttk.Progressbar(top, mode="indeterminate")
+        self.pb_dl.pack(fill="x", padx=20, pady=5)
+        
+        # Start Button
+        btn_start = ttk.Button(top, text="START DOWNLOAD", 
+            command=lambda: self.start_clone_thread(top, branch_var.get(), dest_var.get(), btn_start))
+        btn_start.pack(pady=20)
+
+    def scan_git_branches(self, cb, var):
+        try:
+            # Use git ls-remote to find heads
+            cmd = "git ls-remote --heads git://git.yoctoproject.org/poky"
+            proc = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            
+            if proc.returncode == 0:
+                branches = []
+                for line in proc.stdout.splitlines():
+                    # Format: <hash> refs/heads/<branch>
+                    parts = line.split()
+                    if len(parts) > 1:
+                        ref = parts[1]
+                        if ref.startswith("refs/heads/"):
+                            b_name = ref.replace("refs/heads/", "")
+                            # Filter out unlikely branches if needed, or just keep all
+                            if not b_name.endswith("-next"): # Optional cleanup
+                                branches.append(b_name)
+                
+                # Sort: master first, then others reverse alphabetical (usually newer releases first) or just alphabetical
+                branches.sort(reverse=True)
+                if "master" in branches:
+                    branches.remove("master")
+                    branches.insert(0, "master") # Ensure master is top
+                
+                def update_cb():
+                    cb['values'] = branches
+                    if "scarthgap" in branches:
+                        var.set("scarthgap") 
+                    elif branches:
+                        var.set(branches[0])
+                    else:
+                        var.set("scarthgap") # Fallback
+                        
+                self.root.after(0, update_cb)
+            else:
+                # Fallback on failure
+                self.root.after(0, lambda: cb.config(values=["scarthgap", "kirkstone", "dunfell", "master"]))
+                self.root.after(0, lambda: var.set("scarthgap"))
+        except:
+             pass
+
+    def start_clone_thread(self, top, branch, parent_dir, btn):
+        if not parent_dir or not os.path.exists(parent_dir):
+            messagebox.showerror("Error", "Invalid destination folder", parent=top)
+            return
+            
+        target_dir = os.path.join(parent_dir, "poky")
+        if os.path.exists(target_dir):
+             if not messagebox.askyesno("Warning", f"Folder '{target_dir}' already exists. Clone anyway (might fail)?", parent=top):
+                 return
+
+        btn.config(state="disabled")
+        self.pb_dl.config(mode="determinate", value=0) # Switch to determinate
+        self.lbl_dl_status.config(text=f"Cloning {branch} into {target_dir}...")
+        
+        threading.Thread(target=self.run_clone, args=(top, branch, target_dir, btn)).start()
+
+    def run_clone(self, top, branch, target_dir, btn):
+        try:
+            cmd = f"git clone --progress -b {branch} git://git.yoctoproject.org/poky {shlex.quote(target_dir)}"
+            
+            process = subprocess.Popen(
+                cmd, 
+                shell=True, 
+                stderr=subprocess.PIPE, 
+                stdout=subprocess.DEVNULL,
+                universal_newlines=True
+            )
+
+            # Git prints progress to stderr
+            for line in process.stderr:
+                self.root.after(0, self.lbl_dl_status.config, {"text": f"{line.strip()}"})
+                
+                # Regex to catch percentage, e.g. "Receiving objects:  12% (123/456)"
+                match = re.search(r'(\d+)%', line)
+                if match:
+                    percent = int(match.group(1))
+                    self.root.after(0, self.pb_dl.config, {"value": percent})
+
+            process.wait()
+            
+            if process.returncode == 0:
+                self.root.after(0, self.lbl_dl_status.config, {"text": "Download Complete!", "foreground": "green"})
+                self.root.after(0, self.pb_dl.config, {"value": 100})
+                self.root.after(0, self.poky_path.set, target_dir)
+                self.root.after(0, messagebox.showinfo, "Success", f"Successfully cloned Poky ({branch})!", parent=top)
+                self.root.after(0, top.destroy)
+            else:
+                self.root.after(0, self.lbl_dl_status.config, {"text": "Download Failed!", "foreground": "red"})
+                self.root.after(0, messagebox.showerror, "Error", "Clone failed! Check logs.", parent=top)
+                
+        except Exception as e:
+            self.root.after(0, messagebox.showerror, "Error", str(e), parent=top)
+        finally:
+            self.root.after(0, lambda: btn.config(state="normal"))
 
 if __name__ == "__main__":
     root = tk.Tk()
