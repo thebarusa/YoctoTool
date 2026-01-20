@@ -6,6 +6,7 @@ import subprocess
 import threading
 import glob
 import sys
+import shlex
 
 class YoctoBuilderApp:
     def __init__(self, root):
@@ -55,22 +56,41 @@ class YoctoBuilderApp:
         self.toggle_wifi_fields()
 
     def create_widgets(self):
-        # --- Section 1: Setup ---
-        frame_setup = ttk.LabelFrame(self.root, text="1. Yocto Project Location")
+        self._setup_path_section()
+        self._setup_config_section()
+        self._setup_operations_section() # Combined Build + Flash
+        self._setup_log_section()
+
+    def _setup_path_section(self):
+        # Frame 1: Setup
+        frame_setup = ttk.LabelFrame(self.root, text="1. Project Setup")
         frame_setup.pack(fill="x", padx=10, pady=5)
         
-        ttk.Label(frame_setup, text="Poky Root Path:").pack(side="left", padx=5)
-        ttk.Entry(frame_setup, textvariable=self.poky_path, width=50).pack(side="left", padx=5)
-        ttk.Button(frame_setup, text="Browse", command=self.browse_folder).pack(side="left", padx=5)
+        # Grid layout for better alignment
+        ttk.Label(frame_setup, text="Poky Path:").grid(row=0, column=0, padx=5, pady=10, sticky="e")
+        ttk.Entry(frame_setup, textvariable=self.poky_path, width=60).grid(row=0, column=1, padx=5, pady=10, sticky="ew")
+        ttk.Button(frame_setup, text="Browse", command=self.browse_folder).grid(row=0, column=2, padx=5, pady=10)
+        
+        frame_setup.columnconfigure(1, weight=1)
 
-        # --- Section 2: Configuration (TABS) ---
+    def _setup_config_section(self):
         frame_config = ttk.LabelFrame(self.root, text="2. Configuration (local.conf)")
         frame_config.pack(fill="x", padx=10, pady=5)
         
         notebook = ttk.Notebook(frame_config)
         notebook.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        self._create_basic_tab(notebook)
+        self._create_features_tab(notebook)
+        self._create_rpi_tab(notebook)
 
-        # TAB 1: Basic
+        # Buttons
+        frame_cfg_btns = ttk.Frame(frame_config)
+        frame_cfg_btns.pack(pady=10)
+        ttk.Button(frame_cfg_btns, text="LOAD CONFIG", command=self.load_config).pack(side="left", padx=10)
+        ttk.Button(frame_cfg_btns, text="SAVE CONFIG", command=self.save_config).pack(side="left", padx=10)
+
+    def _create_basic_tab(self, notebook):
         tab_basic = ttk.Frame(notebook)
         notebook.add(tab_basic, text="Basic Settings")
         
@@ -84,7 +104,7 @@ class YoctoBuilderApp:
                                         values=["core-image-minimal", "core-image-base", "core-image-full-cmdline"], width=30)
         self.image_combo.grid(row=1, column=1, padx=10, pady=10, sticky="w")
 
-        # TAB 2: Features
+    def _create_features_tab(self, notebook):
         tab_feat = ttk.Frame(notebook)
         notebook.add(tab_feat, text="Distro Features")
         
@@ -101,7 +121,7 @@ class YoctoBuilderApp:
         ttk.Checkbutton(f_checks, text="ssh-server-openssh", variable=self.feat_ssh_server).pack(anchor="w")
         ttk.Checkbutton(f_checks, text="tools-debug", variable=self.feat_tools_debug).pack(anchor="w")
 
-        # TAB 3: Raspberry Pi
+    def _create_rpi_tab(self, notebook):
         tab_rpi = ttk.Frame(notebook)
         notebook.add(tab_rpi, text="Raspberry Pi Options")
         
@@ -111,7 +131,6 @@ class YoctoBuilderApp:
         ttk.Checkbutton(tab_rpi, text="Enable UART Console", variable=self.rpi_enable_uart).grid(row=1, column=0, padx=10, pady=5, sticky="w")
         ttk.Checkbutton(tab_rpi, text="Accept Commercial Licenses", variable=self.license_commercial).grid(row=2, column=0, padx=10, pady=5, sticky="w")
         
-        # Wi-Fi
         ttk.Checkbutton(tab_rpi, text="Enable Wi-Fi Configuration", variable=self.rpi_enable_wifi, command=self.toggle_wifi_fields).grid(row=3, column=0, padx=10, pady=10, sticky="w")
         
         self.frame_wifi = ttk.Frame(tab_rpi)
@@ -121,41 +140,55 @@ class YoctoBuilderApp:
         ttk.Label(self.frame_wifi, text="Password:").pack(side="left", padx=5)
         ttk.Entry(self.frame_wifi, textvariable=self.wifi_password, width=20, show="*").pack(side="left", padx=5)
 
-        # Buttons
-        frame_cfg_btns = ttk.Frame(frame_config)
-        frame_cfg_btns.pack(pady=10)
-        ttk.Button(frame_cfg_btns, text="LOAD CONFIG", command=self.load_config).pack(side="left", padx=10)
-        ttk.Button(frame_cfg_btns, text="SAVE CONFIG", command=self.save_config).pack(side="left", padx=10)
+    def _setup_operations_section(self):
+        # Combined Operations Frame
+        frame_ops = ttk.Frame(self.root)
+        frame_ops.pack(fill="x", padx=10, pady=5)
 
-        # --- Section 3: Build Actions ---
-        frame_build = ttk.LabelFrame(self.root, text="3. Build Actions")
-        frame_build.pack(fill="x", padx=10, pady=5)
+        # Left: Build
+        frame_build = ttk.LabelFrame(frame_ops, text="3. Build Operations")
+        frame_build.pack(side="left", fill="both", expand=True, padx=(0, 5))
+        
         f_build_btns = ttk.Frame(frame_build)
-        f_build_btns.pack(pady=10)
-        ttk.Button(f_build_btns, text="START BUILD", command=self.start_build_thread).pack(side="left", padx=20)
-        ttk.Button(f_build_btns, text="CLEAN BUILD", command=self.start_clean_thread).pack(side="left", padx=20)
+        f_build_btns.pack(pady=15, padx=10)
+        ttk.Button(f_build_btns, text="START BUILD", command=self.start_build_thread).pack(side="left", padx=10)
+        ttk.Button(f_build_btns, text="CLEAN BUILD", command=self.start_clean_thread).pack(side="left", padx=10)
 
-        # --- Section 4: Flash ---
-        frame_flash = ttk.LabelFrame(self.root, text="4. Flash to SD Card")
-        frame_flash.pack(fill="x", padx=10, pady=5)
-        self.drive_menu = ttk.Combobox(frame_flash, textvariable=self.selected_drive, width=40, state="readonly")
-        self.drive_menu.pack(side="left", padx=10, pady=15)
-        ttk.Button(frame_flash, text="Refresh Drives", command=self.scan_drives).pack(side="left", padx=5)
-        self.btn_flash = ttk.Button(frame_flash, text="FORMAT & FLASH", command=self.flash_image)
-        self.btn_flash.pack(side="left", padx=20)
+        # Right: Flash
+        frame_flash = ttk.LabelFrame(frame_ops, text="4. Flash to SD Card")
+        frame_flash.pack(side="left", fill="both", expand=True, padx=(5, 0))
+        
+        f_flash_ctrl = ttk.Frame(frame_flash)
+        f_flash_ctrl.pack(pady=15, padx=10, fill="x")
+        
+        self.drive_menu = ttk.Combobox(f_flash_ctrl, textvariable=self.selected_drive, width=25, state="readonly")
+        self.drive_menu.pack(side="left", padx=5, fill="x", expand=True)
+        
+        ttk.Button(f_flash_ctrl, text="↻", width=3, command=self.scan_drives).pack(side="left", padx=2)
+        self.btn_flash = ttk.Button(f_flash_ctrl, text="FLASH", command=self.flash_image)
+        self.btn_flash.pack(side="left", padx=10)
 
-        # --- Section 5: Log ---
+    # Legacy separate setup methods removed/merged above
+
+    def _setup_log_section(self):
         frame_log = ttk.LabelFrame(self.root, text="5. Terminal Log")
         frame_log.pack(fill="both", expand=True, padx=10, pady=5)
         self.log_area = scrolledtext.ScrolledText(frame_log, height=12, bg="black", fg="white", font=("Courier New", 10))
         self.log_area.pack(fill="both", expand=True, padx=5, pady=5)
 
     # --- HELPERS ---
+    # --- HELPERS ---
     def log(self, msg):
+        self.root.after(0, self._log_safe, msg)
+
+    def _log_safe(self, msg):
         self.log_area.insert(tk.END, msg + "\n")
         self.log_area.see(tk.END)
     
     def log_overwrite(self, msg):
+        self.root.after(0, self._log_overwrite_safe, msg)
+    
+    def _log_overwrite_safe(self, msg):
         self.log_area.delete("end-2l", "end-1l")
         self.log_area.insert(tk.END, msg + "\n")
         self.log_area.see(tk.END)
@@ -235,6 +268,8 @@ class YoctoBuilderApp:
                 if "WIFI_SSID" in line or "WIFI_PASSWORD" in line: continue
                 if "LICENSE_FLAGS_ACCEPTED" in line and "synaptics-killswitch" in line: continue
                 if "ENABLE_UART" in line: continue
+                if "IMAGE_INSTALL" in line and "kernel-module-dwc2" in line: continue
+                if "IMAGE_INSTALL" in line and "wpa-supplicant" in line and "rpidistro-bcm43430" in line: continue
                 if re.match(r'^\s*MACHINE\s*\?{0,2}=', line): continue
                 if re.match(r'^\s*PACKAGE_CLASSES\s*\?{0,2}=', line): continue
 
@@ -267,14 +302,17 @@ class YoctoBuilderApp:
             if self.license_commercial.get():
                 clean_lines.append('LICENSE_FLAGS_ACCEPTED:append = " commercial synaptics-killswitch"\n')
 
-            if self.rpi_usb_gadget.get():
+            # Only apply RPi specific settings if we are targeting a Raspberry Pi
+            is_rpi = "raspberrypi" in self.machine_var.get()
+
+            if is_rpi and self.rpi_usb_gadget.get():
                 clean_lines.append('# Enable USB OTG/Gadget Mode\n')
                 # FIX: Removed space before dtoverlay
                 clean_lines.append('RPI_EXTRA_CONFIG:append = "dtoverlay=dwc2"\n')
                 clean_lines.append('KERNEL_MODULE_AUTOLOAD += "dwc2 g_ether"\n')
                 clean_lines.append('IMAGE_INSTALL:append = " kernel-module-dwc2 kernel-module-g-ether"\n')
 
-            if self.rpi_enable_wifi.get():
+            if is_rpi and self.rpi_enable_wifi.get():
                 clean_lines.append('# Wi-Fi Config\n')
                 clean_lines.append('IMAGE_INSTALL:append = " wpa-supplicant linux-firmware-rpidistro-bcm43430"\n')
                 clean_lines.append(f'WIFI_SSID = "{self.wifi_ssid.get()}"\n')
@@ -309,12 +347,33 @@ class YoctoBuilderApp:
         self.exec_user_cmd(f"bitbake -c cleanall {self.image_var.get()}")
 
     def exec_user_cmd(self, cmd):
-        full_cmd = f"sudo -u {self.sudo_user} bash -c 'cd {self.poky_path.get()} && source oe-init-build-env {self.build_dir_name.get()} && {cmd}'"
+        # Use shlex for quoting path components to be safe
+        safe_poky = shlex.quote(self.poky_path.get())
+        safe_build = shlex.quote(self.build_dir_name.get())
+        
+        # We generally construct the full bash command string since we are passing it to 'bash -c'
+        # Quoting the inner command is tricky, but basically we want:
+        # sudo -u user bash -c 'cd quoted_path && source oe-init... quoted_build && ...'
+        
+        full_cmd = f"sudo -u {self.sudo_user} bash -c 'cd {safe_poky} && source oe-init-build-env {safe_build} && {cmd}'"
+        
+        # Using shell=True here is necessary because we are invoking a complex bash command.
+        # safe_poky/safe_build help mitigate injection if they contained malicious shell chars.
+        
         proc = subprocess.Popen(full_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
-        for line in proc.stdout: self.log(line.strip())
-        proc.wait()
-        if proc.returncode == 0: messagebox.showinfo("Success", "Done!")
-        else: messagebox.showerror("Error", "Failed!")
+        
+        # Read stdout safely
+        while True:
+            line = proc.stdout.readline()
+            if not line and proc.poll() is not None:
+                break
+            if line:
+                self.log(line.strip())
+                
+        if proc.returncode == 0: 
+            self.root.after(0, messagebox.showinfo, "Success", "Done!")
+        else: 
+            self.root.after(0, messagebox.showerror, "Error", "Failed!")
 
     def scan_drives(self):
         try:
@@ -343,18 +402,32 @@ class YoctoBuilderApp:
     def run_flash(self, img, dev):
         try:
             self.log("Flashing...")
-            subprocess.run(f"umount {dev}*", shell=True)
-            cmd = f"bzcat {img} | dd of={dev} bs=4M status=progress conv=fsync" if img.endswith(".bz2") else f"dd if={img} of={dev} bs=4M status=progress conv=fsync"
+            # Unmount all partitions from that device
+            subprocess.run(f"umount {shlex.quote(dev)}*", shell=True)
+            
+            # Construct dd command safely
+            safe_img = shlex.quote(img)
+            safe_dev = shlex.quote(dev)
+            
+            if img.endswith(".bz2"):
+                cmd = f"bzcat {safe_img} | dd of={safe_dev} bs=4M status=progress conv=fsync"
+            else:
+                cmd = f"dd if={safe_img} of={safe_dev} bs=4M status=progress conv=fsync"
             
             proc = subprocess.Popen(cmd, shell=True, stderr=subprocess.PIPE, universal_newlines=True)
             while True:
                 line = proc.stderr.readline()
                 if not line and proc.poll() is not None: break
-                if "bytes" in line: self.root.after(0, self.log_overwrite, f">> {line.strip()}")
+                if "bytes" in line: 
+                    # send to main thread
+                    self.log_overwrite(f">> {line.strip()}")
             
-            if proc.returncode == 0: messagebox.showinfo("Success", "Flashed!")
-        except Exception as e: messagebox.showerror("Error", str(e))
-        finally: self.root.after(0, lambda: self.btn_flash.config(state="normal"))
+            if proc.returncode == 0: 
+                self.root.after(0, messagebox.showinfo, "Success", "Flashed!")
+        except Exception as e: 
+            self.root.after(0, messagebox.showerror, "Error", str(e))
+        finally: 
+            self.root.after(0, lambda: self.btn_flash.config(state="normal"))
 
 if __name__ == "__main__":
     root = tk.Tk()
