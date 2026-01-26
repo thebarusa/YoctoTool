@@ -27,11 +27,9 @@ class YoctoBuilderApp:
             messagebox.showerror("Error", "Could not detect SUDO_USER.")
             sys.exit(1)
 
-        # Initialize Managers (Expandable list)
         self.board_managers = [
             manager_rpi.RpiManager(self)
         ]
-        # Active manager helper
         self.active_manager = self.board_managers[0] 
 
         self.machine_var = tk.StringVar(value="raspberrypi0-wifi")
@@ -80,7 +78,6 @@ class YoctoBuilderApp:
         self._create_basic_tab(notebook)
         self._create_features_tab(notebook)
         
-        # Create tabs for all managers
         for mgr in self.board_managers:
             mgr.create_tab(notebook)
         
@@ -94,7 +91,6 @@ class YoctoBuilderApp:
         self.update_ui_visibility()
 
     def update_ui_visibility(self, event=None):
-        # Delegate visibility check to managers
         for mgr in self.board_managers:
             is_supported = mgr.is_current_machine_supported()
             mgr.set_visible(is_supported)
@@ -105,7 +101,6 @@ class YoctoBuilderApp:
         tab_basic = ttk.Frame(notebook)
         notebook.add(tab_basic, text="Basic Settings")
         
-        # Collect all machines from all managers + generic ones
         all_machines = ["qemux86-64"]
         for mgr in self.board_managers:
             all_machines.extend(mgr.machines)
@@ -225,7 +220,6 @@ class YoctoBuilderApp:
                 self.feat_ssh_server.set("ssh-server-openssh" in content or "openssh" in content)
                 self.feat_tools_debug.set("tools-debug" in content)            
                 
-                # Ask all managers to try parsing config
                 for mgr in self.board_managers:
                     mgr.parse_config(content)
                 self.update_ui_visibility()
@@ -262,7 +256,6 @@ class YoctoBuilderApp:
         if not os.path.exists(conf): return
         try:
             with open(conf, 'r') as f: content = f.read()
-            # Reuse auto_load logic
             self.auto_load_config()
             self.log(f"Config loaded from {conf}")
         except Exception as e: messagebox.showerror("Error", str(e))
@@ -286,12 +279,9 @@ class YoctoBuilderApp:
                     continue
                 if skip_block: continue
 
-                # Basic exclusions
                 if re.match(r'^\s*MACHINE\s*\?{0,2}=', line): continue
                 if re.match(r'^\s*PACKAGE_CLASSES\s*\?{0,2}=', line): continue
                 
-                # We should filter out board specific configs if we are rewriting them
-                # Ideally, we just rely on the START/END block, but if users edited manually:
                 if "ENABLE_UART" in line: continue
                 
                 clean_lines.append(line)
@@ -315,11 +305,9 @@ class YoctoBuilderApp:
             if features:
                 clean_lines.append(f'EXTRA_IMAGE_FEATURES ?= "{" ".join(features)}"\n')
             
-            # --- BOARD SPECIFIC CONFIG ---
             for mgr in self.board_managers:
                 if mgr.is_current_machine_supported():
                     clean_lines.extend(mgr.get_config_lines())
-                    # Also update bblayers.conf via manager
                     self.update_bblayers(mgr)
 
             clean_lines.append("# --- YOCTO TOOL AUTO CONFIG END ---\n")
@@ -333,7 +321,6 @@ class YoctoBuilderApp:
         except Exception as e: messagebox.showerror("Error", str(e))
 
     def update_bblayers(self, manager):
-        """Update bblayers.conf based on manager requirements"""
         bblayers_conf = os.path.join(self.poky_path.get(), self.build_dir_name.get(), "conf", "bblayers.conf")
         if not os.path.exists(bblayers_conf): return
 
@@ -345,8 +332,6 @@ class YoctoBuilderApp:
             
             needs_update = False
             for line in required_lines:
-                # Simple check if the path (e.g., meta-raspberrypi) is already present
-                # We check the key part of the path to avoid duplicates
                 key_part = line.split('/')[-1].replace('"\n', '').replace('"', '')
                 if key_part not in bb_content:
                     lines_to_add.append(line)
@@ -384,7 +369,6 @@ class YoctoBuilderApp:
             return False
 
     def check_and_download_layers(self):
-        # 1. Identify which manager is active
         active_mgr = None
         for mgr in self.board_managers:
             if mgr.is_current_machine_supported():
@@ -396,8 +380,7 @@ class YoctoBuilderApp:
         poky = self.poky_path.get()
         if not poky or not os.path.isdir(poky): return
 
-        # 2. Get required layers from manager
-        required = active_mgr.get_required_layers() # List of (name, url)
+        required = active_mgr.get_required_layers()
         
         missing = []
         for name, url in required:
@@ -431,8 +414,6 @@ class YoctoBuilderApp:
         finally:
             self.root.after(0, self.set_busy_state, False)
 
-    # ... (Rest of operations: start_build_thread, start_clean_thread, run_clean, exec_user_cmd, scan_drives, flash_image, run_flash are unchanged logic) ...
-    
     def start_build_thread(self):
         if not self.poky_path.get(): return
         self.set_busy_state(True)
@@ -542,8 +523,6 @@ class YoctoBuilderApp:
              self.root.after(0, self.set_busy_state, False)
 
     def open_download_dialog(self):
-        # (This part can remain generic for downloading Poky core, 
-        # or also be delegated, but usually Poky core is common)
         top = tk.Toplevel(self.root)
         top.title("Download Poky (Yocto Project)")
         top.geometry("500x350")
@@ -570,7 +549,6 @@ class YoctoBuilderApp:
         btn_start.pack(pady=20)
 
     def scan_git_branches(self, cb, var):
-        # (Same implementation as before)
         try:
             cmd = "git ls-remote --heads git://git.yoctoproject.org/poky"
             proc = subprocess.run(cmd, shell=True, capture_output=True, text=True)
@@ -594,7 +572,6 @@ class YoctoBuilderApp:
         except: pass
 
     def start_clone_thread(self, top, branch, parent_dir, btn):
-        # (Same implementation as before)
         if not parent_dir or not os.path.exists(parent_dir): return
         target_dir = os.path.join(parent_dir, "poky")
         if os.path.exists(target_dir):
@@ -605,7 +582,6 @@ class YoctoBuilderApp:
         threading.Thread(target=self.run_manual_clone, args=(top, branch, target_dir, btn)).start()
 
     def run_manual_clone(self, top, branch, target_dir, btn):
-        # This manual clone is just for the initial setup
         try:
             cmd = f"git clone --progress -b {branch} git://git.yoctoproject.org/poky {shlex.quote(target_dir)}"
             process = subprocess.Popen(cmd, shell=True, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, universal_newlines=True)
@@ -617,7 +593,6 @@ class YoctoBuilderApp:
             process.wait()
             
             if process.returncode == 0:
-                # After basic poky clone, update path and let auto-layer check handle the rest during build
                 self.root.after(0, self.poky_path.set, target_dir)
                 self.root.after(0, self.save_poky_path)
                 self.root.after(0, self.auto_load_config)
@@ -629,6 +604,13 @@ class YoctoBuilderApp:
         finally: self.root.after(0, lambda: btn.config(state="normal"))
 
 if __name__ == "__main__":
+    if os.geteuid() != 0:
+        try:
+            subprocess.check_call(["sudo", sys.executable] + sys.argv)
+        except subprocess.CalledProcessError:
+            pass
+        sys.exit(0)
+
     root = tk.Tk()
     app = YoctoBuilderApp(root)
     root.mainloop()
