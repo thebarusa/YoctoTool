@@ -9,11 +9,16 @@ import sys
 import shlex
 import json
 import manager_rpi
+import manager_update  # <--- IMPORT MODULE CẬP NHẬT
 
 class YoctoBuilderApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Yocto Tool v18 (Custom State Config)")
+        
+        # --- VERSION CONTROL ---
+        self.APP_VERSION = "v1.0.0" 
+        
+        self.root.title(f"Yocto Tool {self.APP_VERSION} (Custom State Config)")
         self.root.geometry("900x950")
 
         self.poky_path = tk.StringVar()
@@ -25,8 +30,8 @@ class YoctoBuilderApp:
             messagebox.showwarning("Permission Warning", "Please run with 'sudo' to allow flashing.")
             if not self.sudo_user: self.sudo_user = os.environ.get('USER')
         if not self.sudo_user:
-            messagebox.showerror("Error", "Could not detect SUDO_USER.")
-            sys.exit(1)
+            # Fallback nếu không detect được sudo user, dùng root (nhưng build bitbake sẽ cảnh báo)
+            self.sudo_user = "root"
 
         self.board_managers = [
             manager_rpi.RpiManager(self)
@@ -49,9 +54,36 @@ class YoctoBuilderApp:
         
         self.config_file = os.path.expanduser("~/.yocto_tool_config")
 
+        self.create_menu() # <--- TẠO MENU
         self.create_widgets()
         self.load_saved_path()
         self.log(f"Tool running as root. Build user: {self.sudo_user}")
+
+    # --- MENU BAR SETUP ---
+    def create_menu(self):
+        menubar = tk.Menu(self.root)
+        
+        # Help Menu
+        help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(label=f"Current Version: {self.APP_VERSION}", state="disabled")
+        help_menu.add_separator()
+        help_menu.add_command(label="Check for Update...", command=self.check_update)
+        help_menu.add_command(label="About", command=self.show_about)
+        
+        menubar.add_cascade(label="Help", menu=help_menu)
+        self.root.config(menu=menubar)
+
+    def check_update(self):
+        # Gọi hàm kiểm tra update từ module manager_update
+        manager_update.check_for_update(self.root, self.APP_VERSION)
+
+    def show_about(self):
+        msg = (f"Yocto Tool\n"
+               f"Version: {self.APP_VERSION}\n"
+               f"Author: Hungnt8687\n\n"
+               f"An automated GUI tool for building Yocto images for Raspberry Pi.")
+        messagebox.showinfo("About", msg)
+    # ----------------------
 
     def create_widgets(self):
         self._setup_path_section()

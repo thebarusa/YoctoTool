@@ -6,7 +6,7 @@ dist/
 *.spec
 *.log
 *.pyo
-
+poky/
 # Virtual environment
 .venv/
 venv/
