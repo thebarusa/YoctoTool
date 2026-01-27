@@ -2,24 +2,28 @@
 # Exit immediately if any command fails
 set -e
 
+echo "=================================="
+echo "Yocto Tool Build Script"
+echo "=================================="
+
 # ---------------------------------------------------------
-# Step 1: Version Injection
+# Step 1: Determine Version & Name
 # ---------------------------------------------------------
-# If BUILD_VERSION is set (e.g., from GitHub Actions), replace the version in the source code.
-if [ -n "$BUILD_VERSION" ]; then
-    echo "Injecting version: $BUILD_VERSION"
-    sed -i "s/self.APP_VERSION = \".*\"/self.APP_VERSION = \"$BUILD_VERSION\"/" yocto_tool.py
-fi
+# Nếu có BUILD_VERSION từ CI thì dùng, nếu không thì mặc định là v1.0.0
+# Lưu ý: Ta KHÔNG dùng sed để sửa code, mà chỉ đổi tên file exe đầu ra.
+VERSION=${BUILD_VERSION:-"v1.0.0"}
+EXE_NAME="YoctoTool_${VERSION}"
+
+echo ">> Target Version: $VERSION"
+echo ">> Output Filename: $EXE_NAME"
 
 # ---------------------------------------------------------
 # Step 2: System Checks & Dependencies
 # ---------------------------------------------------------
-# Warn if running as root (sudo), though sometimes necessary for apt-get
 if [ "$EUID" -eq 0 ]; then 
     echo "Warning: Running as root."
 fi
 
-# Install necessary system packages for Python, GUI (Tkinter), and building tools
 echo "Installing system dependencies..."
 sudo apt-get update
 sudo apt-get install -y python3 python3-pip python3-tk python3-dev python3-venv binutils git zip
@@ -27,33 +31,26 @@ sudo apt-get install -y python3 python3-pip python3-tk python3-dev python3-venv 
 # ---------------------------------------------------------
 # Step 3: Virtual Environment Setup
 # ---------------------------------------------------------
-# Create a temporary virtual environment to isolate build dependencies
 echo "Setting up Virtual Environment..."
 rm -rf build_env
 python3 -m venv build_env
 
-# Activate the virtual environment
 source build_env/bin/activate
 
-# Install required Python libraries inside the venv
 pip install --upgrade pip
 pip install pyinstaller requests
 
 # ---------------------------------------------------------
 # Step 4: Clean & Build
 # ---------------------------------------------------------
-# Remove artifacts from previous builds to ensure a clean state
 echo "Cleaning old build files..."
 rm -rf build dist __pycache__
 rm -f yocto_tool.spec
 
-# Run PyInstaller to create the standalone executable
-# --onefile: Bundle everything into a single binary
-# --add-data: Include the manager modules inside the binary
-# --windowed: Run as a GUI application (no terminal window)
-echo "Building YoctoTool..."
+echo "Building executable..."
+# PyInstaller sẽ tạo file có tên nằm trong biến $EXE_NAME (ví dụ YoctoTool_v1.0.0)
 pyinstaller --onefile \
-    --name="YoctoTool" \
+    --name="$EXE_NAME" \
     --add-data="manager_rpi.py:." \
     --add-data="manager_update.py:." \
     --windowed \
@@ -64,14 +61,15 @@ pyinstaller --onefile \
 # ---------------------------------------------------------
 # Step 5: Teardown & Verify
 # ---------------------------------------------------------
-# Exit virtual environment and remove it
 deactivate
 rm -rf build_env
 
-# Check if the executable was created successfully
-if [ -f "dist/YoctoTool" ]; then
-    echo "Build success: dist/YoctoTool"
+if [ -f "dist/$EXE_NAME" ]; then
+    echo "=================================="
+    echo "✓ Build success!"
+    echo "File location: dist/$EXE_NAME"
+    echo "=================================="
 else
-    echo "Error: Build failed."
+    echo "Error: Build failed. File dist/$EXE_NAME not found."
     exit 1
 fi

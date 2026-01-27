@@ -14,7 +14,10 @@ import manager_update
 class YoctoBuilderApp:
     def __init__(self, root):
         self.root = root
-        self.APP_VERSION = "dev-build"
+        
+        # --- VERSION LOGIC ---
+        # Get version dynamically from filename (e.g. YoctoTool_v1.0.0 -> v1.0.0)
+        self.APP_VERSION = self.get_version_from_filename()
         
         self.root.title(f"Yocto Tool {self.APP_VERSION}")
         self.root.geometry("900x950")
@@ -55,6 +58,20 @@ class YoctoBuilderApp:
         self.create_widgets()
         self.load_saved_path()
         self.log(f"Tool running as root. Build user: {self.sudo_user}")
+
+    def get_version_from_filename(self):
+        # Default fallback for development
+        version = "v1.0.0"
+        
+        # Check if running as compiled executable
+        if getattr(sys, 'frozen', False):
+            exe_name = os.path.basename(sys.executable)
+            # Regex to find version in filename (e.g., YoctoTool_v1.0.0)
+            match = re.search(r'YoctoTool_(v\d+\.\d+\.\d+)', exe_name)
+            if match:
+                version = match.group(1)
+        
+        return version
 
     def create_menu(self):
         menubar = tk.Menu(self.root)

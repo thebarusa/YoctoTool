@@ -120,46 +120,74 @@ def _download_worker(url, version, top, pb, lbl):
             with zipfile.ZipFile(tmp_zip, "r") as zf:
                 zf.extractall(extract_dir)
             
+            # Identify nested folder if present
             items = os.listdir(extract_dir)
             if len(items) == 1:
                 potential_dir = os.path.join(extract_dir, items[0])
                 if os.path.isdir(potential_dir):
                     extract_dir = potential_dir
         else:
+            # Fallback for raw binary
             os.makedirs(extract_dir, exist_ok=True)
             shutil.copy(tmp_zip, os.path.join(extract_dir, "YoctoTool"))
 
+        # Identify the new executable name (e.g. YoctoTool_v1.0.1)
+        new_exe_name = None
+        for f in os.listdir(extract_dir):
+            if f.startswith("YoctoTool"):
+                new_exe_name = f
+                break
+        
+        if not new_exe_name:
+            raise Exception("Could not find executable in update package")
+
         lbl.config(text="Installing...")
-        top.after(1000, lambda: run_linux_updater(extract_dir))
+        top.after(1000, lambda: run_linux_updater(extract_dir, new_exe_name))
 
     except Exception as e:
         top.after(0, lambda: messagebox.showerror("Update Error", str(e)))
         top.after(0, top.destroy)
 
-def run_linux_updater(new_dir):
+def run_linux_updater(new_dir, new_exe_name):
     if getattr(sys, 'frozen', False):
         current_exe = sys.executable
         app_dir = os.path.dirname(current_exe)
-        exe_name = os.path.basename(current_exe)
-        restart_cmd = f'"{os.path.join(app_dir, exe_name)}" &'
+        old_exe_name = os.path.basename(current_exe)
+        restart_cmd = f'"{os.path.join(app_dir, new_exe_name)}" &'
     else:
+        # Dev mode fallback
         current_exe = os.path.abspath(sys.argv[0])
         app_dir = os.path.dirname(current_exe)
-        exe_name = "yocto_tool.py"
-        restart_cmd = f'python3 "{os.path.join(app_dir, exe_name)}" &'
+        old_exe_name = "yocto_tool.py"
+        new_exe_name = "yocto_tool.py" # In dev, likely just overwriting
+        restart_cmd = f'python3 "{os.path.join(app_dir, new_exe_name)}" &'
 
     script_path = os.path.join(tempfile.gettempdir(), "yocto_updater.sh")
     
+    # Bash script to delete old version, copy new one, and restart
     bash_content = f"""#!/bin/bash
 sleep 2
 SOURCE_DIR="{new_dir}"
 DEST_DIR="{app_dir}"
-EXE_NAME="{exe_name}"
-cp -rf "$SOURCE_DIR/"* "$DEST_DIR/"
-chmod +x "$DEST_DIR/$EXE_NAME"
+OLD_EXE="{old_exe_name}"
+NEW_EXE="{new_exe_name}"
+
+# Delete old version to avoid clutter
+rm -f "$DEST_DIR/$OLD_EXE"
+
+# Copy new version
+cp -rf "$SOURCE_DIR/$NEW_EXE" "$DEST_DIR/"
+
+# Make executable
+chmod +x "$DEST_DIR/$NEW_EXE"
+
+# Cleanup temp
 rm -rf "$SOURCE_DIR"
+
+# Restart
 cd "$DEST_DIR"
 {restart_cmd}
+
 rm -- "$0"
 """
     

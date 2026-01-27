@@ -3,69 +3,72 @@ name: Build and Release YoctoTool (Linux)
 on:
   push:
     tags:
-      - 'v*'   # Kích hoạt khi push tag (ví dụ v1.0.0)
+      - 'v*'
   pull_request:
     branches: [ main ]
 
 permissions:
-  contents: write  # Cấp quyền ghi để upload file lên Releases
+  contents: write
 
 jobs:
   build-release-linux:
-    runs-on: ubuntu-24.04  # Sử dụng Ubuntu 24.04 mới nhất
+    runs-on: ubuntu-24.04
 
     steps:
-      # 1: Checkout source code
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2: Set up Python
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: '3.12' 
 
-      # 3: Cài đặt công cụ nén (Zip)
-      # Lưu ý: Các thư viện khác (tk, venv, binutils...) sẽ do build.sh tự cài đặt.
       - name: Install utility dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y zip
 
-      # 4: Chạy script build
+      # --- THAY ĐỔI QUAN TRỌNG Ở ĐÂY ---
       - name: Run build.sh
+        env:
+          # Truyền tên Tag (ví dụ v1.0.0) vào biến môi trường BUILD_VERSION
+          # Nếu không phải tag (ví dụ PR), dùng short SHA
+          BUILD_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
         run: |
           chmod +x build.sh
           ./build.sh
 
-      # 5: Đóng gói thành file ZIP (Chỉ chạy khi có Tag)
-      # Script build.sh tạo ra file thực thi tại: dist/YoctoTool
-      # Bước này sẽ nén nó thành: dist/YoctoTool-Linux-v1.0.0.zip
       - name: Package Release
         if: startsWith(github.ref, 'refs/tags/')
         run: |
-          cd dist
-          # Lấy tên tag (ví dụ: v1.0.0)
           TAG_NAME=${GITHUB_REF#refs/tags/}
-          # Nén file thực thi
-          zip -r YoctoTool-Linux-${TAG_NAME}.zip YoctoTool
-          echo "Packaging completed: YoctoTool-Linux-${TAG_NAME}.zip"
+          # Tên file mong đợi: YoctoTool_v1.0.0
+          EXE_NAME="YoctoTool_${TAG_NAME}"
+          
+          cd dist
+          # Kiểm tra file có tồn tại không
+          if [ -f "$EXE_NAME" ]; then
+              zip -r "YoctoTool-Linux-${TAG_NAME}.zip" "$EXE_NAME"
+              echo "Packaging completed: YoctoTool-Linux-${TAG_NAME}.zip"
+          else
+              echo "Error: File $EXE_NAME not found in dist/"
+              ls -la
+              exit 1
+          fi
 
-      # 6: Upload lên GitHub Releases
       - name: Upload to GitHub Releases
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          # Upload file zip vừa tạo
           files: dist/*.zip
           body: |
             ## YoctoTool Linux Build
-            Build automatically for version ${{ github.ref_name }} on Ubuntu 24.04.
+            Version: ${{ github.ref_name }}
             
             **Installation:**
             1. Download the zip file.
             2. Extract it.
-            3. Run with sudo: `sudo ./YoctoTool`
+            3. Run: `sudo ./YoctoTool_${{ github.ref_name }}`
           draft: false
           prerelease: false
         env:
