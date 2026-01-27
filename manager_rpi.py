@@ -1,12 +1,10 @@
 import tkinter as tk
 from tkinter import ttk
-import re
 import os
 
 class RpiManager:
     def __init__(self, root_app):
         self.root_app = root_app
-        # Lay path cua poky tu app chinh de tao layer
         self.poky_path_var = root_app.poky_path 
         self.root = root_app.root if hasattr(root_app, 'root') else root_app
         
@@ -16,6 +14,7 @@ class RpiManager:
         self.rpi_enable_uart = tk.BooleanVar(value=True)
         self.license_commercial = tk.BooleanVar(value=True)
         self.rpi_enable_wifi = tk.BooleanVar(value=False)
+        self.persistent_logs = tk.BooleanVar(value=True)
         self.wifi_ssid = tk.StringVar()
         self.wifi_password = tk.StringVar()
         
@@ -33,7 +32,6 @@ class RpiManager:
         ]
 
     def get_bblayers_lines(self):
-        # Them layer custom cua chung ta vao bblayers.conf
         return [
             'BBLAYERS += "${TOPDIR}/../meta-openembedded/meta-oe"\n',
             'BBLAYERS += "${TOPDIR}/../meta-openembedded/meta-python"\n',
@@ -56,10 +54,12 @@ class RpiManager:
         ttk.Checkbutton(tab_rpi, text="Enable UART Console", variable=self.rpi_enable_uart).grid(row=1, column=0, padx=10, pady=5, sticky="w")
         ttk.Checkbutton(tab_rpi, text="Accept Commercial Licenses", variable=self.license_commercial).grid(row=2, column=0, padx=10, pady=5, sticky="w")
         
-        ttk.Checkbutton(tab_rpi, text="Enable Wi-Fi (Netplan + Systemd)", variable=self.rpi_enable_wifi, command=self.toggle_wifi_fields).grid(row=3, column=0, padx=10, pady=10, sticky="w")
+        ttk.Checkbutton(tab_rpi, text="Enable Persistent Logging (Save logs to SD Card)", variable=self.persistent_logs).grid(row=3, column=0, padx=10, pady=5, sticky="w")
+        
+        ttk.Checkbutton(tab_rpi, text="Enable Wi-Fi (Netplan + Systemd)", variable=self.rpi_enable_wifi, command=self.toggle_wifi_fields).grid(row=4, column=0, padx=10, pady=10, sticky="w")
         
         self.frame_wifi = ttk.Frame(tab_rpi)
-        self.frame_wifi.grid(row=4, column=0, columnspan=2, padx=20, pady=0, sticky="w")
+        self.frame_wifi.grid(row=5, column=0, columnspan=2, padx=20, pady=0, sticky="w")
         ttk.Label(self.frame_wifi, text="SSID:").pack(side="left")
         ttk.Entry(self.frame_wifi, textvariable=self.wifi_ssid, width=20).pack(side="left", padx=5)
         ttk.Label(self.frame_wifi, text="Password:").pack(side="left", padx=5)
@@ -83,21 +83,29 @@ class RpiManager:
                 self.notebook.hide(self.tab)
         except: pass
 
-    def parse_config(self, content):
-        self.rpi_usb_gadget.set("dtoverlay=dwc2" in content)
-        self.rpi_enable_uart.set('ENABLE_UART = "1"' in content)
-        self.license_commercial.set("commercial" in content)
-        
-        if "wifi-netplan-config" in content:
-            self.rpi_enable_wifi.set(True)
-        else:
-            self.rpi_enable_wifi.set(False)
+    def get_state(self):
+        return {
+            "rpi_usb_gadget": self.rpi_usb_gadget.get(),
+            "rpi_enable_uart": self.rpi_enable_uart.get(),
+            "license_commercial": self.license_commercial.get(),
+            "persistent_logs": self.persistent_logs.get(),
+            "rpi_enable_wifi": self.rpi_enable_wifi.get(),
+            "wifi_ssid": self.wifi_ssid.get(),
+            "wifi_password": self.wifi_password.get()
+        }
+
+    def set_state(self, state):
+        if not state: return
+        self.rpi_usb_gadget.set(state.get("rpi_usb_gadget", False))
+        self.rpi_enable_uart.set(state.get("rpi_enable_uart", True))
+        self.license_commercial.set(state.get("license_commercial", True))
+        self.persistent_logs.set(state.get("persistent_logs", True))
+        self.rpi_enable_wifi.set(state.get("rpi_enable_wifi", False))
+        self.wifi_ssid.set(state.get("wifi_ssid", ""))
+        self.wifi_password.set(state.get("wifi_password", ""))
         self.toggle_wifi_fields()
 
     def generate_wifi_layer_files(self):
-        """
-        Creates 'meta-wifi-setup' with a recipe for Netplan configuration.
-        """
         poky_dir = self.poky_path_var.get()
         if not poky_dir or not os.path.exists(poky_dir):
             return
@@ -109,7 +117,6 @@ class RpiManager:
         os.makedirs(files_dir, exist_ok=True)
         os.makedirs(os.path.join(layer_path, "conf"), exist_ok=True)
 
-        # 1. Create layer.conf
         with open(os.path.join(layer_path, "conf", "layer.conf"), "w") as f:
             f.write('BBPATH .= ":${LAYERDIR}"\n')
             f.write('BBFILES += "${LAYERDIR}/recipes-*/*/*.bb \\\n')
@@ -122,8 +129,6 @@ class RpiManager:
         ssid = self.wifi_ssid.get()
         psk = self.wifi_password.get()
 
-        # 2. Create Netplan YAML configuration
-        # NOTE: Using 'networkd' renderer which works best with Systemd
         netplan_content = f"""network:
   version: 2
   renderer: networkd
@@ -142,9 +147,8 @@ class RpiManager:
         with open(os.path.join(files_dir, "50-cloud-init.yaml"), "w") as f:
             f.write(netplan_content)
 
-        # 3. Create the BitBake recipe
         recipe_content = """
-SUMMARY = "Configure WiFi using Netplan"
+SUMMARY = "Configure WiFi using Netplan and setup persistent logging"
 LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
 
@@ -153,7 +157,6 @@ SRC_URI = "file://50-cloud-init.yaml"
 S = "${WORKDIR}"
 
 do_install() {
-    # Install netplan config
     install -d ${D}${sysconfdir}/netplan
     install -m 600 ${WORKDIR}/50-cloud-init.yaml ${D}${sysconfdir}/netplan/50-cloud-init.yaml
 }
@@ -175,18 +178,16 @@ FILES:${PN} += "${sysconfdir}/netplan/50-cloud-init.yaml"
             lines.append('RPI_EXTRA_CONFIG:append = "dtoverlay=dwc2"\n')
             lines.append('KERNEL_MODULE_AUTOLOAD += "dwc2 g_ether"\n')
             lines.append('IMAGE_INSTALL:append = " kernel-module-dwc2 kernel-module-g-ether"\n')
+            
+        if self.persistent_logs.get():
+            lines.append('VOLATILE_LOG_DIR = "no"\n')
 
         if self.rpi_enable_wifi.get():
             self.generate_wifi_layer_files()
-            
-            # FIX: ENABLE SYSTEMD & USRMERGE FOR NETPLAN
-            # Netplan strictly depends on systemd, and systemd requires usrmerge
             lines.append('DISTRO_FEATURES:append = " systemd usrmerge"\n')
             lines.append('VIRTUAL-RUNTIME_init_manager = "systemd"\n')
             lines.append('DISTRO_FEATURES_BACKFILL_CONSIDERED = "sysvinit"\n')
             lines.append('VIRTUAL-RUNTIME_initscripts = "systemd-compat-units"\n')
-            
-            # Install packages
             lines.append('IMAGE_INSTALL:append = " netplan wifi-netplan-config linux-firmware-rpidistro-bcm43430"\n')
 
         return lines

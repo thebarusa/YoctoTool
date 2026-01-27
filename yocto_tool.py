@@ -7,12 +7,13 @@ import threading
 import glob
 import sys
 import shlex
+import json
 import manager_rpi
 
 class YoctoBuilderApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Yocto Tool v17 (Modular Architecture)")
+        self.root.title("Yocto Tool v18 (Custom State Config)")
         self.root.geometry("900x950")
 
         self.poky_path = tk.StringVar()
@@ -69,7 +70,7 @@ class YoctoBuilderApp:
         frame_setup.columnconfigure(1, weight=1)
 
     def _setup_config_section(self):
-        frame_config = ttk.LabelFrame(self.root, text="2. Configuration (local.conf)")
+        frame_config = ttk.LabelFrame(self.root, text="2. Configuration (Managed via yocto_tool.conf)")
         frame_config.pack(fill="x", padx=10, pady=5)
         
         notebook = ttk.Notebook(frame_config)
@@ -83,9 +84,9 @@ class YoctoBuilderApp:
         
         frame_cfg_btns = ttk.Frame(frame_config)
         frame_cfg_btns.pack(pady=10)
-        self.btn_load = ttk.Button(frame_cfg_btns, text="LOAD CONFIG", command=self.load_config)
+        self.btn_load = ttk.Button(frame_cfg_btns, text="LOAD", command=self.load_config)
         self.btn_load.pack(side="left", padx=10)
-        self.btn_save = ttk.Button(frame_cfg_btns, text="SAVE CONFIG", command=self.save_config)
+        self.btn_save = ttk.Button(frame_cfg_btns, text="SAVE", command=self.save_config)
         self.btn_save.pack(side="left", padx=10)
         
         self.update_ui_visibility()
@@ -203,28 +204,12 @@ class YoctoBuilderApp:
 
     def get_conf_path(self):
         return os.path.join(self.poky_path.get(), self.build_dir_name.get(), "conf", "local.conf")
+    
+    def get_tool_conf_path(self):
+        return os.path.join(self.poky_path.get(), self.build_dir_name.get(), "conf", "yocto_tool.conf")
 
     def auto_load_config(self):
-        try:
-            conf = self.get_conf_path()
-            if os.path.exists(conf):
-                with open(conf, 'r') as f: content = f.read()
-                
-                m = re.search(r'^\s*MACHINE\s*\?{0,2}=\s*"(.*?)"', content, re.MULTILINE)
-                if m: self.machine_var.set(m.group(1))
-
-                m = re.search(r'^\s*PACKAGE_CLASSES\s*\?{0,2}=\s*"(.*?)"', content, re.MULTILINE)
-                if m: self.pkg_format_var.set(m.group(1).split()[0])
-
-                self.feat_debug_tweaks.set("debug-tweaks" in content)
-                self.feat_ssh_server.set("ssh-server-openssh" in content or "openssh" in content)
-                self.feat_tools_debug.set("tools-debug" in content)            
-                
-                for mgr in self.board_managers:
-                    mgr.parse_config(content)
-                self.update_ui_visibility()
-                self.log("Config auto-loaded")
-        except: pass
+        self.load_config()
 
     def load_saved_path(self):
         try:
@@ -252,20 +237,48 @@ class YoctoBuilderApp:
             self.auto_load_config()
 
     def load_config(self):
-        conf = self.get_conf_path()
-        if not os.path.exists(conf): return
+        tool_conf = self.get_tool_conf_path()
+        if not os.path.exists(tool_conf): 
+            return
+
         try:
-            with open(conf, 'r') as f: content = f.read()
-            self.auto_load_config()
-            self.log(f"Config loaded from {conf}")
-        except Exception as e: messagebox.showerror("Error", str(e))
+            with open(tool_conf, 'r') as f:
+                state = json.load(f)
+            
+            self.machine_var.set(state.get("machine", "raspberrypi0-wifi"))
+            self.image_var.set(state.get("image", "core-image-full-cmdline"))
+            self.pkg_format_var.set(state.get("pkg_format", "package_rpm"))
+            self.init_system_var.set(state.get("init_system", "sysvinit"))
+            
+            feats = state.get("features", {})
+            self.feat_debug_tweaks.set(feats.get("debug_tweaks", True))
+            self.feat_ssh_server.set(feats.get("ssh_server", True))
+            self.feat_tools_debug.set(feats.get("tools_debug", False))
+            
+            mgr_states = state.get("managers", [])
+            if mgr_states and len(mgr_states) > 0 and len(self.board_managers) > 0:
+                self.board_managers[0].set_state(mgr_states[0])
+            
+            self.update_ui_visibility()
+            self.log(f"App state loaded from {tool_conf}")
+
+        except Exception as e:
+            self.log(f"Error loading app state: {e}")
 
     def save_config(self):
         conf = self.get_conf_path()
-        if not os.path.exists(conf): return
+        tool_conf = self.get_tool_conf_path()
         
+        if not os.path.exists(os.path.dirname(conf)):
+            messagebox.showerror("Error", "Build/conf directory not found. Please setup Poky first.")
+            return
+
         try:
-            with open(conf, 'r') as f: lines = f.readlines()
+            # 1. Generate & Save local.conf for Yocto
+            if os.path.exists(conf):
+                with open(conf, 'r') as f: lines = f.readlines()
+            else:
+                lines = []
             
             clean_lines = []
             skip_block = False
@@ -281,7 +294,6 @@ class YoctoBuilderApp:
 
                 if re.match(r'^\s*MACHINE\s*\?{0,2}=', line): continue
                 if re.match(r'^\s*PACKAGE_CLASSES\s*\?{0,2}=', line): continue
-                
                 if "ENABLE_UART" in line: continue
                 
                 clean_lines.append(line)
@@ -315,8 +327,25 @@ class YoctoBuilderApp:
             with open(conf, 'w') as f:
                 f.writelines(clean_lines)
 
-            self.log("Configuration saved.")
-            messagebox.showinfo("Success", "Configuration Updated!")
+            # 2. Save App State to yocto_tool.conf
+            app_state = {
+                "machine": self.machine_var.get(),
+                "image": self.image_var.get(),
+                "pkg_format": self.pkg_format_var.get(),
+                "init_system": self.init_system_var.get(),
+                "features": {
+                    "debug_tweaks": self.feat_debug_tweaks.get(),
+                    "ssh_server": self.feat_ssh_server.get(),
+                    "tools_debug": self.feat_tools_debug.get()
+                },
+                "managers": [mgr.get_state() for mgr in self.board_managers]
+            }
+            
+            with open(tool_conf, 'w') as f:
+                json.dump(app_state, f, indent=4)
+
+            self.log("Configuration saved to local.conf & yocto_tool.conf")
+            messagebox.showinfo("Success", "Configuration Applied & Saved!")
             
         except Exception as e: messagebox.showerror("Error", str(e))
 
