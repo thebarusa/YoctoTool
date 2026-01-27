@@ -1,0 +1,72 @@
+name: Build and Release YoctoTool (Linux)
+
+on:
+  push:
+    tags:
+      - 'v*'   # Kích hoạt khi push tag (ví dụ v1.0.0)
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: write  # Cấp quyền ghi để upload file lên Releases
+
+jobs:
+  build-release-linux:
+    runs-on: ubuntu-24.04  # Sử dụng Ubuntu 24.04 mới nhất
+
+    steps:
+      # 1: Checkout source code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2: Set up Python
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12' 
+
+      # 3: Cài đặt công cụ nén (Zip)
+      # Lưu ý: Các thư viện khác (tk, venv, binutils...) sẽ do build.sh tự cài đặt.
+      - name: Install utility dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zip
+
+      # 4: Chạy script build
+      - name: Run build.sh
+        run: |
+          chmod +x build.sh
+          ./build.sh
+
+      # 5: Đóng gói thành file ZIP (Chỉ chạy khi có Tag)
+      # Script build.sh tạo ra file thực thi tại: dist/YoctoTool
+      # Bước này sẽ nén nó thành: dist/YoctoTool-Linux-v1.0.0.zip
+      - name: Package Release
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          cd dist
+          # Lấy tên tag (ví dụ: v1.0.0)
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          # Nén file thực thi
+          zip -r YoctoTool-Linux-${TAG_NAME}.zip YoctoTool
+          echo "Packaging completed: YoctoTool-Linux-${TAG_NAME}.zip"
+
+      # 6: Upload lên GitHub Releases
+      - name: Upload to GitHub Releases
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          # Upload file zip vừa tạo
+          files: dist/*.zip
+          body: |
+            ## YoctoTool Linux Build
+            Build automatically for version ${{ github.ref_name }} on Ubuntu 24.04.
+            
+            **Installation:**
+            1. Download the zip file.
+            2. Extract it.
+            3. Run with sudo: `sudo ./YoctoTool`
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
