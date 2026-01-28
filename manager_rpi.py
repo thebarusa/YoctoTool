@@ -147,23 +147,48 @@ class RpiManager:
         with open(os.path.join(files_dir, "50-cloud-init.yaml"), "w") as f:
             f.write(netplan_content)
 
+        # Service set region VN chay som nhat co the
+        service_content = """[Unit]
+Description=Set WiFi Regulatory Domain to VN
+Before=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=-/usr/sbin/iw reg set VN
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+"""
+        with open(os.path.join(files_dir, "wifi-reg-vn.service"), "w") as f:
+            f.write(service_content)
+
         recipe_content = """
-SUMMARY = "Configure WiFi using Netplan"
+SUMMARY = "Configure WiFi using Netplan and Set Region VN"
 LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
 
-SRC_URI = "file://50-cloud-init.yaml"
+SRC_URI = "file://50-cloud-init.yaml \\
+           file://wifi-reg-vn.service"
 
 S = "${WORKDIR}"
 
-RDEPENDS:${PN} += "linux-firmware-rpidistro-bcm43430"
+RDEPENDS:${PN} += "iw wireless-regdb-static"
+
+inherit systemd
+
+SYSTEMD_SERVICE:${PN} = "wifi-reg-vn.service"
 
 do_install() {
     install -d ${D}${sysconfdir}/netplan
     install -m 600 ${WORKDIR}/50-cloud-init.yaml ${D}${sysconfdir}/netplan/50-cloud-init.yaml
+    
+    install -d ${D}${systemd_unitdir}/system
+    install -m 0644 ${WORKDIR}/wifi-reg-vn.service ${D}${systemd_unitdir}/system/wifi-reg-vn.service
 }
 
-FILES:${PN} += "${sysconfdir}/netplan/50-cloud-init.yaml"
+FILES:${PN} += "${sysconfdir}/netplan/50-cloud-init.yaml ${systemd_unitdir}/system/wifi-reg-vn.service"
 """
         with open(os.path.join(recipe_dir, "wifi-netplan-config_1.0.bb"), "w") as f:
             f.write(recipe_content)
@@ -191,8 +216,16 @@ FILES:${PN} += "${sysconfdir}/netplan/50-cloud-init.yaml"
             lines.append('DISTRO_FEATURES_BACKFILL_CONSIDERED = "sysvinit"\n')
             lines.append('VIRTUAL-RUNTIME_initscripts = "systemd-compat-units"\n')
             lines.append('IMAGE_INSTALL:append = " netplan wifi-netplan-config"\n')
+            
+            # Kernel module cho chip Wifi Broadcom
             lines.append('IMAGE_INSTALL:append = " kernel-module-brcmfmac"\n')
+            
+            # Firmware chuan cho Raspberry Pi (Zero W + Pi 4/5)
+            # Da xoa cac goi gay loi build
             lines.append('IMAGE_INSTALL:append = " linux-firmware-rpidistro-bcm43430"\n')
-            lines.append('IMAGE_INSTALL:append = " wireless-regdb-static"\n')
+            lines.append('IMAGE_INSTALL:append = " linux-firmware-rpidistro-bcm43455"\n')
+            
+            # Tools set region
+            lines.append('IMAGE_INSTALL:append = " iw wireless-regdb-static"\n')
 
         return lines
