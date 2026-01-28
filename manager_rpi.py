@@ -150,42 +150,92 @@ class RpiManager:
             f.write(netplan_content)
 
         # 3. Create Firmware Fix Script (The Magic Fix)
+        # 168: Use 'grep -v "b0"' to avoid linking Pi Zero 2 W firmware (43430b0) on Pi Zero W (43430)
         script_content = """#!/bin/sh
-# Aggressive Firmware Fixer for Pi Zero W
+# Aggressive Firmware Fixer for Pi Zero W (Debug Mode)
 FW_DIR="/lib/firmware/brcm"
+LOG="/tmp/wifi_fix.log"
 
-# Function to link if source exists and target doesn't
+log() {
+    MSG="$(date): $1"
+    echo "$MSG" >> $LOG
+    echo "WIFI-FIX: $1" > /dev/kmsg 2>/dev/null || echo "WIFI-FIX: $1" # Try kernel log or stdout
+}
+
+log "Starting Wifi Fixer..."
+log "Directory content before fix:"
+ls -l $FW_DIR | while read line; do log "$line"; done
+
+# Function to force link
 link_firmware() {
     SRC=$1
     DST=$2
-    if [ -f "$SRC" ] && [ ! -L "$DST" ] && [ ! -f "$DST" ]; then
+    if [ -f "$SRC" ]; then
+        rm -rf "$DST" # Remove existing file/link
         ln -sf "$SRC" "$DST"
-        echo "Fixed: Linked $SRC to $DST"
+        log "Fixed: Linked $(basename $SRC) to $(basename $DST)"
+    else
+        log "Error: Source not found: $SRC"
     fi
 }
 
+# Helper to find best match
+find_best_match() {
+    PATTERN=$1
+    EXCLUDE_SELF=$2
+    
+    # 1. Zero W Exact Match
+    MATCH=$(find $FW_DIR -name "*model-zero-w*$PATTERN" ! -name "$EXCLUDE_SELF" | grep -v "b0" | head -n 1)
+    
+    # 2. 3 Model B (Compatible fallback)
+    if [ -z "$MATCH" ]; then
+        MATCH=$(find $FW_DIR -name "*3-model-b*$PATTERN" ! -name "$EXCLUDE_SELF" | grep -v "b0" | head -n 1)
+    fi
+    
+    # 3. Generic (Catch-all, but NO b0)
+    if [ -z "$MATCH" ]; then
+        MATCH=$(find $FW_DIR -name "*43430*$PATTERN" ! -name "$EXCLUDE_SELF" | grep -v "b0" | head -n 1)
+    fi
+    
+    # 4. Desperate fallback for txt file only (any purely named .txt)
+    # Be careful not to pick the target itself if it exists
+    if [ -z "$MATCH" ]; then
+         MATCH=$(find $FW_DIR -name "*.txt" ! -name "$EXCLUDE_SELF" | grep "43430" | grep -v "b0" | head -n 1)
+    fi
+
+    echo "$MATCH"
+}
+
 # 1. Fix BIN file
-# Find any file containing '43430' and 'bin', excluding the target name itself
-BIN_SRC=$(find $FW_DIR -name "*43430*sdio*.bin" ! -name "brcmfmac43430-sdio.bin" | head -n 1)
+BIN_SRC=$(find_best_match "sdio*.bin" "brcmfmac43430-sdio.bin")
 if [ -n "$BIN_SRC" ]; then
     link_firmware "$BIN_SRC" "$FW_DIR/brcmfmac43430-sdio.bin"
+else
+    log "FAIL: No BIN source found for *sdio*.bin"
 fi
 
-# 2. Fix TXT file (Most critical)
-TXT_SRC=$(find $FW_DIR -name "*43430*sdio*.txt" ! -name "brcmfmac43430-sdio.txt" | head -n 1)
+# 2. Fix TXT file (Most critical for NVRAM)
+TXT_SRC=$(find_best_match "sdio*.txt" "brcmfmac43430-sdio.txt")
 if [ -n "$TXT_SRC" ]; then
     link_firmware "$TXT_SRC" "$FW_DIR/brcmfmac43430-sdio.txt"
+else
+    log "FAIL: No TXT source found for *sdio*.txt"
+    # Debug: list all txt files
+    find $FW_DIR -name "*.txt" | while read -r line; do log "Found txt: $line"; done
 fi
 
 # 3. Fix CLM_BLOB
-CLM_SRC=$(find $FW_DIR -name "*43430*sdio*.clm_blob" ! -name "brcmfmac43430-sdio.clm_blob" | head -n 1)
+CLM_SRC=$(find_best_match "sdio*.clm_blob" "brcmfmac43430-sdio.clm_blob")
 if [ -n "$CLM_SRC" ]; then
     link_firmware "$CLM_SRC" "$FW_DIR/brcmfmac43430-sdio.clm_blob"
+else
+    log "FAIL: No CLM source found for *sdio*.clm_blob"
 fi
 
 # Reload driver to apply changes
 modprobe -r brcmfmac
-modprobe brcmfmac
+modprobe brcmfmac || log "Modprobe failed"
+log "Finished."
 """
         with open(os.path.join(files_dir, "fix-wifi.sh"), "w") as f:
             f.write(script_content)

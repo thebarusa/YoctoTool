@@ -548,35 +548,48 @@ class YoctoolApp:
 
     def run_format(self, dev):
         try:
-            self.log(f"Starting FORMAT (FAT32) on {dev}...")
+            self.log(f"Starting HARD WIPE on {dev}...")
             
-            # Helper to run commands and capture errors
-            def run_step(desc, cmd, ignore_error=False):
+            def run_step(desc, cmd):
                 self.log(desc)
                 p = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-                if p.returncode != 0 and not ignore_error:
+                if p.returncode != 0:
                     raise Exception(f"Command '{cmd}' failed.\nStderr: {p.stderr}")
+
+            subprocess.run(f"umount -f {dev}*", shell=True, stderr=subprocess.DEVNULL)
+            subprocess.run(f"swapoff {dev}*", shell=True, stderr=subprocess.DEVNULL)
             
-            run_step("1/5: Unmounting...", f"umount {shlex.quote(dev)}*", ignore_error=True)
+            # Buoc quan trong nhat: Ghi de sector dau tien de huy bang phan vung loi
+            run_step("Nuking Partition Table...", f"dd if=/dev/zero of={shlex.quote(dev)} bs=512 count=2048 status=none conv=fsync")
             
-            run_step("2/5: Wiping signatures...", f"wipefs -a --force {shlex.quote(dev)}")
+            subprocess.run(f"wipefs -a --force {shlex.quote(dev)}", shell=True, stderr=subprocess.DEVNULL)
             
-            run_step("3/5: Creating Partition Table...", f"parted -s {shlex.quote(dev)} mklabel msdos")
-            
-            run_step("4/5: Creating FAT32 Partition...", f"parted -s {shlex.quote(dev)} mkpart primary fat32 1MiB 100%")
-            
-            self.log("Waiting for partition table update...")
+            subprocess.run("sync", shell=True)
             subprocess.run("udevadm settle", shell=True)
-            import time; time.sleep(1) # Grace period
+            subprocess.run(f"partprobe {shlex.quote(dev)}", shell=True)
+            import time; time.sleep(2)
             
-            # Predict partition name
-            if dev[-1].isdigit(): part_dev = f"{dev}p1" # e.g. mmcblk0 -> mmcblk0p1
-            else: part_dev = f"{dev}1" # e.g. sdb -> sdb1
+            run_step("Creating New Partition Table...", f"parted -s {shlex.quote(dev)} mklabel msdos")
             
-            run_step(f"5/5: Formatting {part_dev}...", f"mkfs.vfat -F 32 -n 'YOCTOOL' {shlex.quote(part_dev)}")
+            subprocess.run("udevadm settle", shell=True)
+            time.sleep(1)
             
-            self.root.after(0, messagebox.showinfo, "Success", "Format Complete! Drive is now FAT32.")
-            self.log("Format Complete.")
+            run_step("Creating Partition...", f"parted -s {shlex.quote(dev)} mkpart primary fat32 0% 100%")
+            
+            subprocess.run("udevadm settle", shell=True)
+            time.sleep(1)
+            
+            if dev[-1].isdigit(): part_dev = f"{dev}p1"
+            else: part_dev = f"{dev}1"
+            
+            if not os.path.exists(part_dev):
+                subprocess.run(f"partprobe {shlex.quote(dev)}", shell=True)
+                time.sleep(1)
+
+            run_step(f"Formatting {part_dev}...", f"mkfs.vfat -F 32 -n STORAGE {shlex.quote(part_dev)}")
+            
+            self.root.after(0, messagebox.showinfo, "Success", "Card Wiped & Restored")
+            self.log("Hard Wipe Complete.")
             
         except Exception as e:
             self.log(f"Format Error: {e}")
@@ -632,9 +645,14 @@ class YoctoolApp:
                         self.root.after(0, self.build_progress_text.set, f"{int(percent)}%")
             
             if proc.returncode == 0: 
+                # Force kernel to re-read partition table so new partitions appear immediately
+                self.log("Refreshing partition table...")
+                subprocess.run(f"partprobe {safe_dev}", shell=True)
+                subprocess.run("udevadm settle", shell=True)
+
                 self.root.after(0, self.build_progress.set, 100)
                 self.root.after(0, self.build_progress_text.set, "100%")
-                self.root.after(0, messagebox.showinfo, "Success", "Flashed!")
+                self.root.after(0, messagebox.showinfo, "Success", "Flashed! Partition table updated.")
         except Exception as e: 
             self.root.after(0, messagebox.showerror, "Error", str(e))
         finally: 
