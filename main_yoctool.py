@@ -9,7 +9,7 @@ import sys
 import shlex
 import json
 import manager_rpi
-import manager_update
+import manager_ota_rauc
 import multiprocessing
 
 class YoctoolApp:
@@ -21,12 +21,10 @@ class YoctoolApp:
         self.root.title(f"Yoctool {self.APP_VERSION} - Yocto Image Builder")
         self.root.geometry("950x900")
 
-        # --- Path Variables ---
         self.poky_path = tk.StringVar()
         self.build_dir_name = tk.StringVar(value="build")
         self.selected_drive = tk.StringVar()
         
-        # --- Check Sudo ---
         self.sudo_user = os.environ.get('SUDO_USER')
         if os.geteuid() != 0:
             messagebox.showwarning("Permission Warning", "Please run with 'sudo' to allow flashing.")
@@ -34,34 +32,29 @@ class YoctoolApp:
         if not self.sudo_user:
             self.sudo_user = "root"
 
-        # --- Managers ---
+        self.ota_manager = manager_ota_rauc.UpdateManager(self)
+        
         self.board_managers = [
             manager_rpi.RpiManager(self)
         ]
         self.active_manager = self.board_managers[0] 
 
-        # --- Configuration Variables ---
-        # 1. Target
         self.machine_var = tk.StringVar(value="raspberrypi0-wifi")
         self.distro_var = tk.StringVar(value="poky")
         self.image_var = tk.StringVar(value="core-image-full-cmdline")
         
-        # 2. System Core (Moved from Features to Basic)
         self.pkg_format_var = tk.StringVar(value="package_rpm")
         self.init_system_var = tk.StringVar(value="systemd")
         
-        # 3. Performance (New)
         cpu_count = multiprocessing.cpu_count()
         self.bb_threads_var = tk.IntVar(value=cpu_count)
         self.parallel_make_var = tk.IntVar(value=cpu_count)
 
-        # 4. Image Features
         self.feat_debug_tweaks = tk.BooleanVar(value=True)
         self.feat_ssh_server = tk.BooleanVar(value=True)
         self.feat_tools_debug = tk.BooleanVar(value=False)
-        self.feat_package_mgmt = tk.BooleanVar(value=True) # New: Keep package manager in rootfs
+        self.feat_package_mgmt = tk.BooleanVar(value=True)
         
-        # --- UI States ---
         self.build_progress = tk.DoubleVar()
         self.build_progress_text = tk.StringVar(value="0%")
         self.build_progress.trace_add("write", self._update_progress_canvas)
@@ -123,6 +116,7 @@ class YoctoolApp:
         
         self._create_basic_tab(notebook)
         self._create_features_tab(notebook)
+        self.ota_manager.create_tab(notebook)
         
         for mgr in self.board_managers:
             mgr.create_tab(notebook)
@@ -147,7 +141,6 @@ class YoctoolApp:
         tab_basic = ttk.Frame(notebook)
         notebook.add(tab_basic, text="General Settings")
         
-        # Grid Configuration
         tab_basic.columnconfigure(0, weight=1)
         tab_basic.columnconfigure(1, weight=1)
 
@@ -155,7 +148,6 @@ class YoctoolApp:
         for mgr in self.board_managers:
             all_machines.extend(mgr.machines)
 
-        # --- Group 1: Target Definition ---
         grp_target = ttk.LabelFrame(tab_basic, text=" Target Definition ")
         grp_target.grid(row=0, column=0, columnspan=2, padx=10, pady=5, sticky="ew")
         grp_target.columnconfigure(1, weight=1)
@@ -174,7 +166,6 @@ class YoctoolApp:
                                         values=["core-image-minimal", "core-image-base", "core-image-full-cmdline", "core-image-sato"], width=25)
         self.image_combo.grid(row=1, column=1, padx=5, pady=5, sticky="w")
 
-        # --- Group 2: System Management (Core) ---
         grp_sys = ttk.LabelFrame(tab_basic, text=" System Core ")
         grp_sys.grid(row=1, column=0, padx=10, pady=5, sticky="nsew")
 
@@ -184,7 +175,6 @@ class YoctoolApp:
         ttk.Label(grp_sys, text="Package Format:").grid(row=1, column=0, padx=5, pady=5, sticky="e")
         ttk.OptionMenu(grp_sys, self.pkg_format_var, "package_rpm", "package_rpm", "package_deb", "package_ipk").grid(row=1, column=1, padx=5, pady=5, sticky="w")
 
-        # --- Group 3: Build Performance ---
         grp_perf = ttk.LabelFrame(tab_basic, text=" Build Performance ")
         grp_perf.grid(row=1, column=1, padx=10, pady=5, sticky="nsew")
 
@@ -324,25 +314,21 @@ class YoctoolApp:
             with open(tool_conf, 'r') as f:
                 state = json.load(f)
             
-            # Load General Settings
             self.machine_var.set(state.get("machine", "raspberrypi0-wifi"))
             self.distro_var.set(state.get("distro", "poky"))
             self.image_var.set(state.get("image", "core-image-full-cmdline"))
             self.pkg_format_var.set(state.get("pkg_format", "package_rpm"))
             self.init_system_var.set(state.get("init_system", "systemd"))
             
-            # Load Performance Settings
             self.bb_threads_var.set(state.get("bb_threads", multiprocessing.cpu_count()))
             self.parallel_make_var.set(state.get("parallel_make", multiprocessing.cpu_count()))
             
-            # Load Features
             feats = state.get("features", {})
             self.feat_debug_tweaks.set(feats.get("debug_tweaks", True))
             self.feat_ssh_server.set(feats.get("ssh_server", True))
             self.feat_tools_debug.set(feats.get("tools_debug", False))
             self.feat_package_mgmt.set(feats.get("package_mgmt", True))
             
-            # Load Board Manager State
             mgr_states = state.get("managers", [])
             if mgr_states and len(mgr_states) > 0 and len(self.board_managers) > 0:
                 self.board_managers[0].set_state(mgr_states[0])
@@ -362,13 +348,11 @@ class YoctoolApp:
             return
 
         try:
-            # --- 1. Read existing local.conf ---
             if os.path.exists(conf):
                 with open(conf, 'r') as f: lines = f.readlines()
             else:
                 lines = []
             
-            # --- 2. Clean old Yoctool Auto-Config Block ---
             clean_lines = []
             skip_block = False
             for line in lines:
@@ -380,7 +364,6 @@ class YoctoolApp:
                     continue
                 if skip_block: continue
 
-                # Clean overrides for core vars
                 if re.match(r'^\s*MACHINE\s*\?{0,2}=', line): continue
                 if re.match(r'^\s*DISTRO\s*\?{0,2}=', line): continue
                 if re.match(r'^\s*PACKAGE_CLASSES\s*\?{0,2}=', line): continue
@@ -395,17 +378,13 @@ class YoctoolApp:
             if clean_lines and not clean_lines[-1].endswith('\n'):
                 clean_lines[-1] += '\n'
 
-            # --- 3. Append New Config ---
-            # Basic Variables
             clean_lines.append(f'MACHINE ??= "{self.machine_var.get()}"\n')
             clean_lines.append(f'DISTRO ?= "{self.distro_var.get()}"\n')
             clean_lines.append(f'PACKAGE_CLASSES ?= "{self.pkg_format_var.get()}"\n')
             
-            # Performance Variables
             clean_lines.append(f'BB_NUMBER_THREADS = "{self.bb_threads_var.get()}"\n')
             clean_lines.append(f'PARALLEL_MAKE = "-j {self.parallel_make_var.get()}"\n')
 
-            # Features & Systemd Logic
             clean_lines.append("\n# --- YOCTOOL AUTO CONFIG START ---\n")
             
             if self.init_system_var.get() == "systemd":
@@ -421,19 +400,20 @@ class YoctoolApp:
             if features:
                 clean_lines.append(f'EXTRA_IMAGE_FEATURES ?= "{" ".join(features)}"\n')
             
-            # Board Manager Configs
             for mgr in self.board_managers:
                 if mgr.is_current_machine_supported():
                     clean_lines.extend(mgr.get_config_lines())
                     self.update_bblayers(mgr)
 
+            clean_lines.extend(self.ota_manager.get_config_lines())
+            if self.ota_manager.enable_rauc.get():
+                self.update_bblayers(self.ota_manager)
+
             clean_lines.append("# --- YOCTOOL AUTO CONFIG END ---\n")
 
-            # --- 4. Write local.conf ---
             with open(conf, 'w') as f:
                 f.writelines(clean_lines)
 
-            # --- 5. Save Tool State (JSON) ---
             app_state = {
                 "machine": self.machine_var.get(),
                 "distro": self.distro_var.get(),
@@ -510,48 +490,46 @@ class YoctoolApp:
             return False
 
     def check_and_download_layers(self):
-        active_mgr = None
-        for mgr in self.board_managers:
-            if mgr.is_current_machine_supported():
-                active_mgr = mgr
-                break
-        
-        if not active_mgr: return
-
         poky = self.poky_path.get()
         if not poky or not os.path.isdir(poky): return
 
-        required = active_mgr.get_required_layers()
-        
-        missing = []
-        for name, url in required:
-            if not os.path.exists(os.path.join(poky, name)):
-                missing.append((name, url))
-
-        if not missing: return
-
-        self.log("Detecting missing layers...")
         try:
             branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=poky, text=True).strip()
             if branch == "HEAD": branch = "scarthgap"
         except: branch = "scarthgap"
         self.log(f"Detected Poky branch: {branch}")
 
-        for name, url in missing:
-            self.log(f"Cloning {name} ({branch})...")
+        required_layers = []
+        if self.active_manager:
+            required_layers.extend(self.active_manager.get_required_layers())
+            
+        bblayers_conf = os.path.join(poky, self.build_dir_name.get(), "conf", "bblayers.conf")
+        has_rauc_in_conf = False
+        if os.path.exists(bblayers_conf):
+            with open(bblayers_conf, 'r') as f:
+                if "meta-rauc" in f.read():
+                    has_rauc_in_conf = True
+
+        if self.ota_manager.enable_rauc.get() or has_rauc_in_conf:
+            required_layers.extend(self.ota_manager.get_required_layers())
+
+        for name, url in required_layers:
             path = os.path.join(poky, name)
-            success = self.exec_stream_cmd(["git", "clone", "--progress", "-b", branch, url, path])
-            if not success:
-                self.log(f"Failed to clone {name} ({branch}). Trying master...")
-                self.exec_stream_cmd(["git", "clone", "--progress", url, path])
+            if not os.path.exists(path):
+                self.log(f"Missing layer {name}. Cloning from {url}...")
+                success = self.exec_stream_cmd(["git", "clone", "--progress", "-b", branch, url, path])
+                if not success:
+                    self.log(f"Failed to clone {name} ({branch}). Trying master...")
+                    self.exec_stream_cmd(["git", "clone", "--progress", url, path])
 
-        self.log("Layer download check complete.")
+        self.log("Layer check complete.")
 
-    def run_build(self):
+    def run_build(self, target=None):
         try:
             self.check_and_download_layers()
-            self.log(f"Building {self.image_var.get()}...")
-            self.exec_user_cmd(f"bitbake {self.image_var.get()}")
+            build_target = target if target else self.image_var.get()
+            self.log(f"Building {build_target}...")
+            self.exec_user_cmd(f"bitbake {build_target}")
         finally:
             self.root.after(0, self.set_busy_state, False)
 
@@ -559,6 +537,11 @@ class YoctoolApp:
         if not self.poky_path.get(): return
         self.set_busy_state(True)
         threading.Thread(target=self.run_build).start()
+
+    def start_specific_build(self, target):
+        if not self.poky_path.get(): return
+        self.set_busy_state(True)
+        threading.Thread(target=self.run_build, args=(target,)).start()
 
     def start_clean_thread(self):
         if not self.poky_path.get(): return
@@ -577,6 +560,8 @@ class YoctoolApp:
         safe_poky = shlex.quote(self.poky_path.get())
         safe_build = shlex.quote(self.build_dir_name.get())
         full_cmd = f"sudo -u {self.sudo_user} bash -c 'cd {safe_poky} && source oe-init-build-env {safe_build} && {cmd}'"
+        
+        self.root.after(0, lambda: self.pb_canvas.itemconfig(self.pb_rect, fill="#4CAF50"))
         
         proc = subprocess.Popen(full_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
         self.root.after(0, self.build_progress.set, 0)
@@ -601,6 +586,7 @@ class YoctoolApp:
             self.root.after(0, self.build_progress_text.set, "100%") 
             self.root.after(0, messagebox.showinfo, "Success", "Done!")
         else: 
+            self.root.after(0, lambda: self.pb_canvas.itemconfig(self.pb_rect, fill="#FF0000"))
             self.root.after(0, messagebox.showerror, "Error", "Failed!")
 
     def scan_drives(self):
@@ -622,6 +608,7 @@ class YoctoolApp:
 
     def run_format(self, dev):
         try:
+            self.root.after(0, lambda: self.pb_canvas.itemconfig(self.pb_rect, fill="#4CAF50"))
             self.log(f"Starting HARD WIPE on {dev}...")
             
             def run_step(desc, cmd):
@@ -665,6 +652,7 @@ class YoctoolApp:
             self.log("Hard Wipe Complete.")
             
         except Exception as e:
+            self.root.after(0, lambda: self.pb_canvas.itemconfig(self.pb_rect, fill="#FF0000"))
             self.log(f"Format Error: {e}")
             self.root.after(0, lambda: messagebox.showerror("Error", f"Format failed:\n{str(e)}"))
         finally:
@@ -688,6 +676,7 @@ class YoctoolApp:
 
     def run_flash(self, img, dev, img_size):
         try:
+            self.root.after(0, lambda: self.pb_canvas.itemconfig(self.pb_rect, fill="#4CAF50"))
             self.log("Preparing to flash...")
             
             subprocess.run(f"umount {shlex.quote(dev)}*", shell=True, stderr=subprocess.DEVNULL)
@@ -725,6 +714,7 @@ class YoctoolApp:
                 self.root.after(0, self.build_progress_text.set, "100%")
                 self.root.after(0, messagebox.showinfo, "Success", "Flashed! Partition table updated.")
         except Exception as e: 
+            self.root.after(0, lambda: self.pb_canvas.itemconfig(self.pb_rect, fill="#FF0000"))
             self.root.after(0, messagebox.showerror, "Error", str(e))
         finally: 
              self.root.after(0, self.set_busy_state, False)

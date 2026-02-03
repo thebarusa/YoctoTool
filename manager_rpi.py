@@ -50,35 +50,26 @@ class RpiManager:
 
         tab_rpi = self.tab
         
-        # Configure Grid Weight (Chia cot 50-50)
         tab_rpi.columnconfigure(0, weight=1)
         tab_rpi.columnconfigure(1, weight=1)
 
-        # ============================================================
-        # GROUP 1: SYSTEM & USER (LEFT COLUMN)
-        # ============================================================
+        # GROUP 1: SYSTEM & USER
         frame_sys = ttk.LabelFrame(tab_rpi, text=" 1. System Identity & User ")
         frame_sys.grid(row=0, column=0, padx=10, pady=5, sticky="nsew")
 
-        # Hostname
         ttk.Label(frame_sys, text="Hostname:").grid(row=0, column=0, padx=5, pady=5, sticky="e")
         ttk.Entry(frame_sys, textvariable=self.rpi_hostname, width=25).grid(row=0, column=1, padx=5, pady=5, sticky="w")
 
-        # Username
         ttk.Label(frame_sys, text="Username:").grid(row=1, column=0, padx=5, pady=5, sticky="e")
         ttk.Entry(frame_sys, textvariable=self.rpi_username, width=25).grid(row=1, column=1, padx=5, pady=5, sticky="w")
 
-        # Password
         ttk.Label(frame_sys, text="Password:").grid(row=2, column=0, padx=5, pady=5, sticky="e")
         ttk.Entry(frame_sys, textvariable=self.rpi_password, width=25).grid(row=2, column=1, padx=5, pady=5, sticky="w")
 
-        # Note
         lbl_note = ttk.Label(frame_sys, text="(User 'root' skips creation)", font=("Arial", 8, "italic"), foreground="gray")
         lbl_note.grid(row=3, column=1, sticky="w", padx=5, pady=(0, 5))
 
-        # ============================================================
-        # GROUP 2: HARDWARE & FEATURES (RIGHT COLUMN)
-        # ============================================================
+        # GROUP 2: HARDWARE
         frame_hw = ttk.LabelFrame(tab_rpi, text=" 2. Hardware & Drivers ")
         frame_hw.grid(row=0, column=1, padx=10, pady=5, sticky="nsew")
 
@@ -88,17 +79,13 @@ class RpiManager:
         ttk.Separator(frame_hw, orient="horizontal").grid(row=3, column=0, sticky="ew", pady=5)
         ttk.Checkbutton(frame_hw, text="Accept Commercial Licenses (Codecs/Firmware)", variable=self.license_commercial).grid(row=4, column=0, sticky="w", padx=10, pady=2)
 
-        # ============================================================
-        # GROUP 3: CONNECTIVITY (BOTTOM - FULL WIDTH)
-        # ============================================================
+        # GROUP 3: CONNECTIVITY
         frame_net = ttk.LabelFrame(tab_rpi, text=" 3. Wireless Connectivity ")
         frame_net.grid(row=1, column=0, columnspan=2, padx=10, pady=10, sticky="ew")
 
-        # Master Checkbox
         chk_wifi = ttk.Checkbutton(frame_net, text="Enable Wi-Fi Configuration", variable=self.rpi_enable_wifi, command=self.toggle_wifi_fields)
         chk_wifi.pack(anchor="w", padx=10, pady=5)
 
-        # Auth Fields (Hidden by default)
         self.frame_wifi_auth = ttk.Frame(frame_net)
         self.frame_wifi_auth.pack(fill="x", padx=20, pady=(0, 10))
 
@@ -108,7 +95,6 @@ class RpiManager:
         ttk.Label(self.frame_wifi_auth, text="Password:").pack(side="left", padx=(15, 0))
         ttk.Entry(self.frame_wifi_auth, textvariable=self.wifi_password, width=25, show="*").pack(side="left", padx=5)
 
-        # Initialize visibility state
         self.toggle_wifi_fields()
 
     def toggle_wifi_fields(self):
@@ -172,14 +158,17 @@ class RpiManager:
         os.makedirs(files_dir, exist_ok=True)
         os.makedirs(os.path.join(layer_path, "conf"), exist_ok=True)
 
+        # 1. Layer Conf
         with open(os.path.join(layer_path, "conf", "layer.conf"), "w") as f:
             f.write('BBPATH .= ":${LAYERDIR}"\n')
             f.write('BBFILES += "${LAYERDIR}/recipes-*/*/*.bb"\n')
+            f.write('BBFILES += "${LAYERDIR}/recipes-*/*/*.bbappend"\n') # FIX: Enable bbappend
             f.write('BBFILE_COLLECTIONS += "wifisetup"\n')
             f.write('BBFILE_PATTERN_wifisetup = "^${LAYERDIR}/"\n')
             f.write('BBFILE_PRIORITY_wifisetup = "10"\n')
             f.write('LAYERSERIES_COMPAT_wifisetup = "scarthgap"\n')
 
+        # 2. WPA Supplicant Conf
         wpa_conf = f"""
 ctrl_interface=/run/wpa_supplicant
 update_config=1
@@ -193,6 +182,7 @@ network={{
         with open(os.path.join(files_dir, "wpa_supplicant.conf"), "w") as f:
             f.write(wpa_conf.strip() + "\n")
 
+        # 3. Networkd Conf
         network_conf = """
 [Match]
 Name=wlan0
@@ -206,6 +196,7 @@ SendHostname=yes
         with open(os.path.join(files_dir, "80-wifi.network"), "w") as f:
             f.write(network_conf.strip() + "\n")
 
+        # 4. Service Conf
         wpa_service = """
 [Unit]
 Description=WPA Supplicant for wlan0
@@ -225,6 +216,7 @@ WantedBy=multi-user.target
         with open(os.path.join(files_dir, "wpa-wlan0.service"), "w") as f:
             f.write(wpa_service.strip() + "\n")
 
+        # 5. Recipe WPA
         with open(os.path.join(recipe_dir, "wpa-config_1.0.bb"), "w") as f:
             f.write("""
 SUMMARY = "WPA Supplicant and Networkd configuration"
@@ -258,18 +250,18 @@ FILES:${PN} += "${sysconfdir}/wpa_supplicant/wpa_supplicant.conf \\
                 ${systemd_system_unitdir}/wpa-wlan0.service"
 """)
 
+        # 6. FIX: Create base-files bbappend to set hostname safely
+        hostname = self.rpi_hostname.get().strip()
+        if hostname:
+            base_dir = os.path.join(layer_path, "recipes-core", "base-files")
+            os.makedirs(base_dir, exist_ok=True)
+            with open(os.path.join(base_dir, "base-files_%.bbappend"), "w") as f:
+                f.write(f'hostname = "{hostname}"\n')
+
     def get_config_lines(self):
         lines = []
         
-        hostname = self.rpi_hostname.get().strip()
-        if hostname:
-            lines.append(f'hostname:pn-base-files = "{hostname}"\n')
-            cmd_host = f"echo {hostname} > ${{IMAGE_ROOTFS}}/etc/hostname;"
-            cmd_hosts_1 = f"echo 127.0.0.1 localhost > ${{IMAGE_ROOTFS}}/etc/hosts;"
-            cmd_hosts_2 = f"echo 127.0.1.1 {hostname} >> ${{IMAGE_ROOTFS}}/etc/hosts;"
-            
-            lines.append(f'ROOTFS_POSTPROCESS_COMMAND += "{cmd_host} {cmd_hosts_1} {cmd_hosts_2}"\n')
-
+        # User Config
         user = self.rpi_username.get().strip()
         pwd = self.rpi_password.get().strip()
         
@@ -298,7 +290,7 @@ FILES:${PN} += "${sysconfdir}/wpa_supplicant/wpa_supplicant.conf \\
             lines.append('DISTRO_FEATURES_BACKFILL_CONSIDERED = "sysvinit"\n')
             lines.append('VIRTUAL-RUNTIME_initscripts = "systemd-compat-units"\n')
             
-            lines.append('IMAGE_INSTALL:append = " wpa-supplicant iw linux-firmware-rpidistro-bcm43430 kernel-module-brcmfmac kernel-module-brcmfmac-wcc wpa-config wireless-regdb-static avahi-daemon"\n')
+            lines.append('IMAGE_INSTALL:append = " wpa-supplicant iw linux-firmware-rpidistro-bcm43430 kernel-module-brcmfmac kernel-module-brcmfmac-wcc wpa-config wireless-regdb-static avahi-daemon libnss-mdns"\n')
             
             lines.append('KERNEL_MODULE_AUTOLOAD:append = " brcmfmac-wcc"\n')
             lines.append('CMDLINE:append = " brcmfmac.feature_disable=0x200000"\n')

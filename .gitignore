@@ -7,6 +7,8 @@ dist/
 *.log
 *.pyo
 poky/
+*.pem
+
 # Virtual environment
 .venv/
 venv/
@@ -17,3 +19,4 @@ venv/
 # PyInstaller warnings
 warn-*.txt
 xref-*.html
+
