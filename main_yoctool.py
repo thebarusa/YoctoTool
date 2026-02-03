@@ -8,9 +8,13 @@ import glob
 import sys
 import shlex
 import json
-import manager_rpi
-import manager_ota_rauc
 import multiprocessing
+
+# IMPORT NEW CONFIG MODULES
+import config_general
+import config_image
+import config_ota
+import config_rpi
 
 class YoctoolApp:
     def __init__(self, root):
@@ -32,28 +36,18 @@ class YoctoolApp:
         if not self.sudo_user:
             self.sudo_user = "root"
 
-        self.ota_manager = manager_ota_rauc.UpdateManager(self)
+        # Initialize Config Tabs
+        # Note: GeneralTab needs access to board managers for the machine list, 
+        # so we initialize managers first, but their tabs are created later.
         
-        self.board_managers = [
-            manager_rpi.RpiManager(self)
-        ]
+        # Board Managers (Currently only RPi, but extensible)
+        self.tab_rpi = config_rpi.RpiTab(self)
+        self.board_managers = [self.tab_rpi]
         self.active_manager = self.board_managers[0] 
 
-        self.machine_var = tk.StringVar(value="raspberrypi0-wifi")
-        self.distro_var = tk.StringVar(value="poky")
-        self.image_var = tk.StringVar(value="core-image-full-cmdline")
-        
-        self.pkg_format_var = tk.StringVar(value="package_rpm")
-        self.init_system_var = tk.StringVar(value="systemd")
-        
-        cpu_count = multiprocessing.cpu_count()
-        self.bb_threads_var = tk.IntVar(value=cpu_count)
-        self.parallel_make_var = tk.IntVar(value=cpu_count)
-
-        self.feat_debug_tweaks = tk.BooleanVar(value=True)
-        self.feat_ssh_server = tk.BooleanVar(value=True)
-        self.feat_tools_debug = tk.BooleanVar(value=False)
-        self.feat_package_mgmt = tk.BooleanVar(value=True)
+        self.tab_general = config_general.GeneralTab(self)
+        self.tab_image = config_image.ImageTab(self)
+        self.tab_ota = config_ota.OTATab(self)
         
         self.build_progress = tk.DoubleVar()
         self.build_progress_text = tk.StringVar(value="0%")
@@ -64,7 +58,7 @@ class YoctoolApp:
         self.create_menu()
         self.create_widgets()
         self.load_saved_path()
-        self.log(f"Tool initialized. CPU Cores detected: {cpu_count}")
+        self.log(f"Tool initialized. CPU Cores detected: {multiprocessing.cpu_count()}")
 
     def get_version_from_filename(self):
         version = "v1.0.0"
@@ -86,7 +80,8 @@ class YoctoolApp:
         self.root.config(menu=menubar)
 
     def check_update(self):
-        manager_update.check_for_update(self.root, self.APP_VERSION)
+        # Placeholder for update check if manager_update exists
+        pass 
 
     def show_about(self):
         messagebox.showinfo("About", f"Yoctool\nVersion: {self.APP_VERSION}\nAuthor: Hungnt8687")
@@ -114,10 +109,12 @@ class YoctoolApp:
         notebook = ttk.Notebook(frame_config)
         notebook.pack(fill="both", expand=True, padx=5, pady=5)
         
-        self._create_basic_tab(notebook)
-        self._create_features_tab(notebook)
-        self.ota_manager.create_tab(notebook)
+        # Create Tabs via specific modules
+        self.tab_general.create_tab(notebook)
+        self.tab_image.create_tab(notebook)
+        self.tab_ota.create_tab(notebook)
         
+        # Create Board Manager Tabs
         for mgr in self.board_managers:
             mgr.create_tab(notebook)
         
@@ -136,65 +133,6 @@ class YoctoolApp:
             mgr.set_visible(is_supported)
             if is_supported:
                 self.active_manager = mgr
-
-    def _create_basic_tab(self, notebook):
-        tab_basic = ttk.Frame(notebook)
-        notebook.add(tab_basic, text="General Settings")
-        
-        tab_basic.columnconfigure(0, weight=1)
-        tab_basic.columnconfigure(1, weight=1)
-
-        all_machines = ["qemux86-64"]
-        for mgr in self.board_managers:
-            all_machines.extend(mgr.machines)
-
-        grp_target = ttk.LabelFrame(tab_basic, text=" Target Definition ")
-        grp_target.grid(row=0, column=0, columnspan=2, padx=10, pady=5, sticky="ew")
-        grp_target.columnconfigure(1, weight=1)
-        grp_target.columnconfigure(3, weight=1)
-
-        ttk.Label(grp_target, text="Machine:").grid(row=0, column=0, padx=5, pady=5, sticky="e")
-        self.machine_combo = ttk.Combobox(grp_target, textvariable=self.machine_var, values=all_machines, width=25)
-        self.machine_combo.grid(row=0, column=1, padx=5, pady=5, sticky="w")
-        self.machine_combo.bind("<<ComboboxSelected>>", self.update_ui_visibility)
-
-        ttk.Label(grp_target, text="Distro:").grid(row=0, column=2, padx=5, pady=5, sticky="e")
-        ttk.Combobox(grp_target, textvariable=self.distro_var, values=["poky", "poky-tiny", "poky-altcfg"], width=20).grid(row=0, column=3, padx=5, pady=5, sticky="w")
-
-        ttk.Label(grp_target, text="Image Recipe:").grid(row=1, column=0, padx=5, pady=5, sticky="e")
-        self.image_combo = ttk.Combobox(grp_target, textvariable=self.image_var, 
-                                        values=["core-image-minimal", "core-image-base", "core-image-full-cmdline", "core-image-sato"], width=25)
-        self.image_combo.grid(row=1, column=1, padx=5, pady=5, sticky="w")
-
-        grp_sys = ttk.LabelFrame(tab_basic, text=" System Core ")
-        grp_sys.grid(row=1, column=0, padx=10, pady=5, sticky="nsew")
-
-        ttk.Label(grp_sys, text="Init Manager:").grid(row=0, column=0, padx=5, pady=5, sticky="e")
-        ttk.OptionMenu(grp_sys, self.init_system_var, "systemd", "systemd", "sysvinit").grid(row=0, column=1, padx=5, pady=5, sticky="w")
-
-        ttk.Label(grp_sys, text="Package Format:").grid(row=1, column=0, padx=5, pady=5, sticky="e")
-        ttk.OptionMenu(grp_sys, self.pkg_format_var, "package_rpm", "package_rpm", "package_deb", "package_ipk").grid(row=1, column=1, padx=5, pady=5, sticky="w")
-
-        grp_perf = ttk.LabelFrame(tab_basic, text=" Build Performance ")
-        grp_perf.grid(row=1, column=1, padx=10, pady=5, sticky="nsew")
-
-        ttk.Label(grp_perf, text="BB_NUMBER_THREADS:").grid(row=0, column=0, padx=5, pady=5, sticky="e")
-        ttk.Spinbox(grp_perf, from_=1, to=64, textvariable=self.bb_threads_var, width=5).grid(row=0, column=1, padx=5, pady=5, sticky="w")
-
-        ttk.Label(grp_perf, text="PARALLEL_MAKE (-j):").grid(row=1, column=0, padx=5, pady=5, sticky="e")
-        ttk.Spinbox(grp_perf, from_=1, to=64, textvariable=self.parallel_make_var, width=5).grid(row=1, column=1, padx=5, pady=5, sticky="w")
-
-    def _create_features_tab(self, notebook):
-        tab_feat = ttk.Frame(notebook)
-        notebook.add(tab_feat, text="Image Features")
-        
-        frame_extra = ttk.LabelFrame(tab_feat, text=" EXTRA_IMAGE_FEATURES ")
-        frame_extra.pack(fill="x", padx=10, pady=10)
-
-        ttk.Checkbutton(frame_extra, text="debug-tweaks (Allow root login without pass)", variable=self.feat_debug_tweaks).pack(anchor="w", padx=10, pady=2)
-        ttk.Checkbutton(frame_extra, text="ssh-server-openssh (Install OpenSSH Server)", variable=self.feat_ssh_server).pack(anchor="w", padx=10, pady=2)
-        ttk.Checkbutton(frame_extra, text="tools-debug (GDB, Strace, etc.)", variable=self.feat_tools_debug).pack(anchor="w", padx=10, pady=2)
-        ttk.Checkbutton(frame_extra, text="package-management (Keep package manager in image)", variable=self.feat_package_mgmt).pack(anchor="w", padx=10, pady=2)
 
     def _setup_operations_section(self):
         frame_ops = ttk.Frame(self.root)
@@ -314,21 +252,12 @@ class YoctoolApp:
             with open(tool_conf, 'r') as f:
                 state = json.load(f)
             
-            self.machine_var.set(state.get("machine", "raspberrypi0-wifi"))
-            self.distro_var.set(state.get("distro", "poky"))
-            self.image_var.set(state.get("image", "core-image-full-cmdline"))
-            self.pkg_format_var.set(state.get("pkg_format", "package_rpm"))
-            self.init_system_var.set(state.get("init_system", "systemd"))
+            # Distribute state to tabs
+            self.tab_general.set_state(state.get("general", {}))
+            self.tab_image.set_state(state.get("image", {}))
+            self.tab_ota.set_state(state.get("ota", {}))
             
-            self.bb_threads_var.set(state.get("bb_threads", multiprocessing.cpu_count()))
-            self.parallel_make_var.set(state.get("parallel_make", multiprocessing.cpu_count()))
-            
-            feats = state.get("features", {})
-            self.feat_debug_tweaks.set(feats.get("debug_tweaks", True))
-            self.feat_ssh_server.set(feats.get("ssh_server", True))
-            self.feat_tools_debug.set(feats.get("tools_debug", False))
-            self.feat_package_mgmt.set(feats.get("package_mgmt", True))
-            
+            # Load manager states
             mgr_states = state.get("managers", [])
             if mgr_states and len(mgr_states) > 0 and len(self.board_managers) > 0:
                 self.board_managers[0].set_state(mgr_states[0])
@@ -348,6 +277,7 @@ class YoctoolApp:
             return
 
         try:
+            # 1. Read existing local.conf and strip old auto-config
             if os.path.exists(conf):
                 with open(conf, 'r') as f: lines = f.readlines()
             else:
@@ -363,7 +293,8 @@ class YoctoolApp:
                     skip_block = False
                     continue
                 if skip_block: continue
-
+                
+                # Strip variables that we manage
                 if re.match(r'^\s*MACHINE\s*\?{0,2}=', line): continue
                 if re.match(r'^\s*DISTRO\s*\?{0,2}=', line): continue
                 if re.match(r'^\s*PACKAGE_CLASSES\s*\?{0,2}=', line): continue
@@ -378,56 +309,36 @@ class YoctoolApp:
             if clean_lines and not clean_lines[-1].endswith('\n'):
                 clean_lines[-1] += '\n'
 
-            clean_lines.append(f'MACHINE ??= "{self.machine_var.get()}"\n')
-            clean_lines.append(f'DISTRO ?= "{self.distro_var.get()}"\n')
-            clean_lines.append(f'PACKAGE_CLASSES ?= "{self.pkg_format_var.get()}"\n')
-            
-            clean_lines.append(f'BB_NUMBER_THREADS = "{self.bb_threads_var.get()}"\n')
-            clean_lines.append(f'PARALLEL_MAKE = "-j {self.parallel_make_var.get()}"\n')
-
+            # 2. Start Generating New Content
             clean_lines.append("\n# --- YOCTOOL AUTO CONFIG START ---\n")
             
-            if self.init_system_var.get() == "systemd":
-                clean_lines.append('DISTRO_FEATURES:append = " systemd usrmerge"\n')
-                clean_lines.append('VIRTUAL-RUNTIME_init_manager = "systemd"\n')
+            # Get content from General Config
+            clean_lines.extend(self.tab_general.get_config_lines())
+            
+            # Get content from Image Config
+            clean_lines.extend(self.tab_image.get_config_lines())
 
-            features = []
-            if self.feat_debug_tweaks.get(): features.append("debug-tweaks")
-            if self.feat_ssh_server.get(): features.append("ssh-server-openssh")
-            if self.feat_tools_debug.get(): features.append("tools-debug")
-            if self.feat_package_mgmt.get(): features.append("package-management")
-            
-            if features:
-                clean_lines.append(f'EXTRA_IMAGE_FEATURES ?= "{" ".join(features)}"\n')
-            
+            # Get content from Board Managers (RPi)
             for mgr in self.board_managers:
                 if mgr.is_current_machine_supported():
                     clean_lines.extend(mgr.get_config_lines())
                     self.update_bblayers(mgr)
 
-            clean_lines.extend(self.ota_manager.get_config_lines())
-            if self.ota_manager.enable_rauc.get():
-                self.update_bblayers(self.ota_manager)
+            # Get content from OTA Config
+            clean_lines.extend(self.tab_ota.get_config_lines())
+            if self.tab_ota.enable_rauc.get():
+                self.update_bblayers(self.tab_ota)
 
             clean_lines.append("# --- YOCTOOL AUTO CONFIG END ---\n")
 
             with open(conf, 'w') as f:
                 f.writelines(clean_lines)
 
+            # 3. Save Tool State JSON
             app_state = {
-                "machine": self.machine_var.get(),
-                "distro": self.distro_var.get(),
-                "image": self.image_var.get(),
-                "pkg_format": self.pkg_format_var.get(),
-                "init_system": self.init_system_var.get(),
-                "bb_threads": self.bb_threads_var.get(),
-                "parallel_make": self.parallel_make_var.get(),
-                "features": {
-                    "debug_tweaks": self.feat_debug_tweaks.get(),
-                    "ssh_server": self.feat_ssh_server.get(),
-                    "tools_debug": self.feat_tools_debug.get(),
-                    "package_mgmt": self.feat_package_mgmt.get()
-                },
+                "general": self.tab_general.get_state(),
+                "image": self.tab_image.get_state(),
+                "ota": self.tab_ota.get_state(),
                 "managers": [mgr.get_state() for mgr in self.board_managers]
             }
             
@@ -510,8 +421,8 @@ class YoctoolApp:
                 if "meta-rauc" in f.read():
                     has_rauc_in_conf = True
 
-        if self.ota_manager.enable_rauc.get() or has_rauc_in_conf:
-            required_layers.extend(self.ota_manager.get_required_layers())
+        if self.tab_ota.enable_rauc.get() or has_rauc_in_conf:
+            required_layers.extend(self.tab_ota.get_required_layers())
 
         for name, url in required_layers:
             path = os.path.join(poky, name)
@@ -527,7 +438,8 @@ class YoctoolApp:
     def run_build(self, target=None):
         try:
             self.check_and_download_layers()
-            build_target = target if target else self.image_var.get()
+            # Get image name from General Tab
+            build_target = target if target else self.tab_general.image_var.get()
             self.log(f"Building {build_target}...")
             self.exec_user_cmd(f"bitbake {build_target}")
         finally:
@@ -552,7 +464,8 @@ class YoctoolApp:
     def run_clean(self):
         try:
             self.log("Cleaning...")
-            self.exec_user_cmd(f"bitbake -c cleanall {self.image_var.get()}")
+            # Get image name from General Tab
+            self.exec_user_cmd(f"bitbake -c cleanall {self.tab_general.image_var.get()}")
         finally:
             self.root.after(0, self.set_busy_state, False)
 
@@ -662,8 +575,12 @@ class YoctoolApp:
         sel = self.selected_drive.get()
         if not sel or "No devices" in sel: return
         dev = f"/dev/{sel.split()[0]}"
-        deploy = os.path.join(self.poky_path.get(), self.build_dir_name.get(), "tmp/deploy/images", self.machine_var.get())
-        files = glob.glob(os.path.join(deploy, f"{self.image_var.get()}*.wic*"))
+        # Get machine and image from General Tab
+        machine = self.tab_general.machine_var.get()
+        image = self.tab_general.image_var.get()
+        
+        deploy = os.path.join(self.poky_path.get(), self.build_dir_name.get(), "tmp/deploy/images", machine)
+        files = glob.glob(os.path.join(deploy, f"{image}*.wic*"))
         if not files: 
             messagebox.showerror("Error", "No image found")
             return

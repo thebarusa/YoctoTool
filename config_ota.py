@@ -3,9 +3,8 @@ from tkinter import ttk, messagebox
 import os
 import subprocess
 import glob
-import shlex
 
-class UpdateManager:
+class OTATab:
     def __init__(self, root_app):
         self.root_app = root_app
         self.enable_rauc = tk.BooleanVar(value=False)
@@ -56,7 +55,8 @@ class UpdateManager:
         if not self.check_sshpass(): return
         poky_dir = self.root_app.poky_path.get()
         build_dir = self.root_app.build_dir_name.get()
-        machine = self.root_app.machine_var.get()
+        # Access machine var from general tab
+        machine = self.root_app.tab_general.machine_var.get()
         deploy_dir = os.path.join(poky_dir, build_dir, "tmp/deploy/images", machine)
         if not os.path.exists(deploy_dir):
             messagebox.showerror("Error", "Deploy directory not found.")
@@ -154,9 +154,11 @@ part /data --ondisk mmcblk0 --fstype=ext4 --label data --align 4096 --size 128
         os.makedirs(rauc_files_dir, exist_ok=True)
 
         # 1. system.conf
+        # Access machine var from general tab
+        machine = self.root_app.tab_general.machine_var.get()
         sys_conf_content = f"""
 [system]
-compatible={self.root_app.machine_var.get()}
+compatible={machine}
 bootloader=u-boot
 [keyring]
 path=development-1.cert.pem
@@ -241,7 +243,8 @@ RAUC_CERT_FILE = "${RAUC_CERT_FILE_REAL}"
         lines.append(f'RAUC_KEY_FILE_REAL = "{key_path}"\n')
         lines.append(f'RAUC_CERT_FILE_REAL = "{cert_path}"\n')
         lines.append(f'RAUC_KEYRING_FILE = "{cert_path}"\n')
-        current_image = self.root_app.image_var.get()
+        # Access image var from general tab
+        current_image = self.root_app.tab_general.image_var.get()
         lines.append(f'RAUC_TARGET_IMAGE = "{current_image}"\n')
         lines.append('IMAGE_FSTYPES:append = " wic.bz2"\n')
         lines.append('IMAGE_FSTYPES:append = " tar.gz"\n') 
@@ -252,3 +255,18 @@ RAUC_CERT_FILE = "${RAUC_CERT_FILE_REAL}"
     
     def get_required_layers(self):
         return [("meta-rauc", "https://github.com/rauc/meta-rauc")]
+    
+    def get_state(self):
+         return {
+             "enable_rauc": self.enable_rauc.get(),
+             "rauc_slot_size": self.rauc_slot_size.get(),
+             "target_ip": self.target_ip.get(),
+             "target_user": self.target_user.get()
+         }
+    
+    def set_state(self, state):
+        if not state: return
+        self.enable_rauc.set(state.get("enable_rauc", False))
+        self.rauc_slot_size.set(state.get("rauc_slot_size", "1024"))
+        self.target_ip.set(state.get("target_ip", "192.168.1.x"))
+        self.target_user.set(state.get("target_user", "root"))

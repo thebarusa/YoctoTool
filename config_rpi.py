@@ -2,12 +2,10 @@ import tkinter as tk
 from tkinter import ttk
 import os
 
-class RpiManager:
+class RpiTab:
     def __init__(self, root_app):
         self.root_app = root_app
         self.poky_path_var = root_app.poky_path
-        self.root = root_app.root if hasattr(root_app, 'root') else root_app
-
         self.machines = ["raspberrypi0-wifi", "raspberrypi3", "raspberrypi4", "raspberrypi5"]
 
         # --- Variables ---
@@ -28,7 +26,8 @@ class RpiManager:
         self.notebook = None
 
     def is_current_machine_supported(self):
-        return self.root_app.machine_var.get() in self.machines
+        # Access machine var from general tab
+        return self.root_app.tab_general.machine_var.get() in self.machines
 
     def get_required_layers(self):
         return [
@@ -162,7 +161,7 @@ class RpiManager:
         with open(os.path.join(layer_path, "conf", "layer.conf"), "w") as f:
             f.write('BBPATH .= ":${LAYERDIR}"\n')
             f.write('BBFILES += "${LAYERDIR}/recipes-*/*/*.bb"\n')
-            f.write('BBFILES += "${LAYERDIR}/recipes-*/*/*.bbappend"\n') # FIX: Enable bbappend
+            f.write('BBFILES += "${LAYERDIR}/recipes-*/*/*.bbappend"\n')
             f.write('BBFILE_COLLECTIONS += "wifisetup"\n')
             f.write('BBFILE_PATTERN_wifisetup = "^${LAYERDIR}/"\n')
             f.write('BBFILE_PRIORITY_wifisetup = "10"\n')
