@@ -28,7 +28,6 @@ class GeneralTab:
 
         # Gather machines from other managers (e.g., RPi)
         all_machines = ["qemux86-64"]
-        # Access the list of managers from the root app to populate the machine list
         if hasattr(self.root_app, 'board_managers'):
             for mgr in self.root_app.board_managers:
                 all_machines.extend(mgr.machines)
@@ -41,7 +40,6 @@ class GeneralTab:
         ttk.Label(grp_target, text="Machine:").grid(row=0, column=0, padx=5, pady=5, sticky="e")
         self.machine_combo = ttk.Combobox(grp_target, textvariable=self.machine_var, values=all_machines, width=25)
         self.machine_combo.grid(row=0, column=1, padx=5, pady=5, sticky="w")
-        # Trigger visibility updates in main app when machine changes
         self.machine_combo.bind("<<ComboboxSelected>>", self.root_app.update_ui_visibility)
 
         ttk.Label(grp_target, text="Distro:").grid(row=0, column=2, padx=5, pady=5, sticky="e")
@@ -78,9 +76,15 @@ class GeneralTab:
         lines.append(f'BB_NUMBER_THREADS = "{self.bb_threads_var.get()}"\n')
         lines.append(f'PARALLEL_MAKE = "-j {self.parallel_make_var.get()}"\n')
         
+        # --- FIX: Dùng biến INIT_MANAGER thay vì chỉ set VIRTUAL-RUNTIME ---
+        # Đây là chuẩn mới của Yocto, giúp các layer khác (như Mender) nhận diện đúng.
         if self.init_system_var.get() == "systemd":
+            lines.append('INIT_MANAGER = "systemd"\n')
+            # Các dòng dưới đây là bổ trợ (thường INIT_MANAGER tự xử lý, nhưng giữ lại cho chắc chắn)
             lines.append('DISTRO_FEATURES:append = " systemd usrmerge"\n')
             lines.append('VIRTUAL-RUNTIME_init_manager = "systemd"\n')
+        elif self.init_system_var.get() == "sysvinit":
+            lines.append('INIT_MANAGER = "sysvinit"\n')
             
         return lines
 

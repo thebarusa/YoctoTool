@@ -36,11 +36,18 @@ class RpiTab:
         ]
 
     def get_bblayers_lines(self):
-        return [
+        layers = [
             'BBLAYERS += "${TOPDIR}/../meta-openembedded/meta-oe"\n',
+            'BBLAYERS += "${TOPDIR}/../meta-openembedded/meta-python"\n',
             'BBLAYERS += "${TOPDIR}/../meta-openembedded/meta-networking"\n',
             'BBLAYERS += "${TOPDIR}/../meta-raspberrypi"\n'
         ]
+        
+        # --- FIX: Thêm layer wifi tự tạo vào danh sách ---
+        if self.rpi_enable_wifi.get():
+            layers.append('BBLAYERS += "${TOPDIR}/../meta-wifi-setup"\n')
+            
+        return layers
 
     def create_tab(self, notebook):
         self.notebook = notebook
@@ -150,6 +157,7 @@ class RpiTab:
         if not poky_dir or not os.path.exists(poky_dir):
             return
 
+        # Đường dẫn tới layer mới
         layer_path = os.path.join(poky_dir, "meta-wifi-setup")
         recipe_dir = os.path.join(layer_path, "recipes-connectivity", "wpa-config")
         files_dir = os.path.join(recipe_dir, "files")
@@ -157,7 +165,7 @@ class RpiTab:
         os.makedirs(files_dir, exist_ok=True)
         os.makedirs(os.path.join(layer_path, "conf"), exist_ok=True)
 
-        # 1. Layer Conf
+        # 1. Tạo file Layer Conf
         with open(os.path.join(layer_path, "conf", "layer.conf"), "w") as f:
             f.write('BBPATH .= ":${LAYERDIR}"\n')
             f.write('BBFILES += "${LAYERDIR}/recipes-*/*/*.bb"\n')
@@ -167,7 +175,7 @@ class RpiTab:
             f.write('BBFILE_PRIORITY_wifisetup = "10"\n')
             f.write('LAYERSERIES_COMPAT_wifisetup = "scarthgap"\n')
 
-        # 2. WPA Supplicant Conf
+        # 2. Tạo file WPA Supplicant Conf
         wpa_conf = f"""
 ctrl_interface=/run/wpa_supplicant
 update_config=1
@@ -181,7 +189,7 @@ network={{
         with open(os.path.join(files_dir, "wpa_supplicant.conf"), "w") as f:
             f.write(wpa_conf.strip() + "\n")
 
-        # 3. Networkd Conf
+        # 3. Tạo file Networkd Conf
         network_conf = """
 [Match]
 Name=wlan0
@@ -195,7 +203,7 @@ SendHostname=yes
         with open(os.path.join(files_dir, "80-wifi.network"), "w") as f:
             f.write(network_conf.strip() + "\n")
 
-        # 4. Service Conf
+        # 4. Tạo file Service Conf
         wpa_service = """
 [Unit]
 Description=WPA Supplicant for wlan0
@@ -215,7 +223,7 @@ WantedBy=multi-user.target
         with open(os.path.join(files_dir, "wpa-wlan0.service"), "w") as f:
             f.write(wpa_service.strip() + "\n")
 
-        # 5. Recipe WPA
+        # 5. Tạo Recipe WPA
         with open(os.path.join(recipe_dir, "wpa-config_1.0.bb"), "w") as f:
             f.write("""
 SUMMARY = "WPA Supplicant and Networkd configuration"
@@ -249,7 +257,7 @@ FILES:${PN} += "${sysconfdir}/wpa_supplicant/wpa_supplicant.conf \\
                 ${systemd_system_unitdir}/wpa-wlan0.service"
 """)
 
-        # 6. FIX: Create base-files bbappend to set hostname safely
+        # 6. FIX: Create base-files bbappend
         hostname = self.rpi_hostname.get().strip()
         if hostname:
             base_dir = os.path.join(layer_path, "recipes-core", "base-files")
