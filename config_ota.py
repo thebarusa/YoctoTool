@@ -175,7 +175,7 @@ part /data --ondisk mmcblk0 --fstype=ext4 --label data --align 4096 --size 128
         sys_conf_content = f"""
 [system]
 compatible={machine}
-bootloader=u-boot
+bootloader=uboot
 data-directory=/var/lib/rauc
 
 [keyring]
