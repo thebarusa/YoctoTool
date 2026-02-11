@@ -217,17 +217,27 @@ RREPLACES:${PN} += "rauc-conf"
 
 S = "${WORKDIR}"
 
+inherit deploy
+
+do_compile() {
+    dd if=/dev/zero of=${WORKDIR}/uboot.env bs=1024 count=16
+}
+
 do_install() {
     install -d ${D}${sysconfdir}/rauc
     install -m 644 ${WORKDIR}/system.conf ${D}${sysconfdir}/rauc/system.conf
     
     install -d ${D}${sysconfdir}
     install -m 644 ${WORKDIR}/fw_env.config ${D}${sysconfdir}/fw_env.config
-    
-    dd if=/dev/zero of=${D}/uboot.env bs=1024 count=16
 }
 
-FILES:${PN} += "${sysconfdir}/rauc/system.conf ${sysconfdir}/fw_env.config /uboot.env"
+do_deploy() {
+    install -m 644 ${WORKDIR}/uboot.env ${DEPLOYDIR}/uboot.env
+}
+
+addtask deploy after do_compile before do_build
+
+FILES:${PN} += "${sysconfdir}/rauc/system.conf ${sysconfdir}/fw_env.config"
 """
         with open(os.path.join(rauc_recipe_dir, "rpi-rauc-conf_1.0.bb"), "w") as f: f.write(recipe_content.strip())
 
@@ -300,6 +310,8 @@ RAUC_CERT_FILE = "${RAUC_CERT_FILE_REAL}"
         
         current_image = self.root_app.tab_general.image_var.get()
         lines.append(f'RAUC_TARGET_IMAGE = "{current_image}"\n')
+        
+        lines.append('IMAGE_BOOT_FILES:append = " uboot.env"\n')
         
         lines.append('IMAGE_FSTYPES:append = " wic.bz2"\n')
         lines.append('IMAGE_FSTYPES:append = " tar.gz"\n')
