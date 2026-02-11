@@ -52,8 +52,6 @@ echo "Building executable..."
 # Lưu ý: Script chính giờ là main_yoctool.py
 pyinstaller --onefile \
     --name="$EXE_NAME" \
-    --add-data="manager_rpi.py:." \
-    --add-data="manager_update.py:." \
     --windowed \
     --clean \
     --icon=NONE \
