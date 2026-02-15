@@ -3,6 +3,7 @@ import threading
 import os
 import shlex
 import re
+import time
 from tkinter import messagebox
 
 class BuildManager:
@@ -25,6 +26,46 @@ class BuildManager:
         self.app.set_busy_state(True)
         threading.Thread(target=self.run_build, args=(target,)).start()
 
+    def install_dependencies(self):
+        self.app.log("Checking and installing host dependencies...")
+        
+        # FIX: Updated package names for modern Ubuntu/Debian
+        pkgs = [
+            "gawk", "wget", "git", "diffstat", "unzip", "texinfo", "gcc", "build-essential",
+            "chrpath", "socat", "cpio", "python3", "python3-pip", "python3-pexpect",
+            "xz-utils", "debianutils", "iputils-ping", "python3-git", "python3-jinja2",
+            "libegl1", "libsdl1.2-dev", "pylint", "xterm", "zstd", "lz4", "file", "locales"
+        ]
+        
+        cmd_update = ["sudo", "apt-get", "update"]
+        cmd_install = ["sudo", "apt-get", "install", "-y"] + pkgs
+        
+        env = os.environ.copy()
+        env["DEBIAN_FRONTEND"] = "noninteractive"
+        
+        try:
+            # Run update first to ensure package lists are fresh
+            subprocess.run(cmd_update, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            
+            # Run install
+            proc = subprocess.run(cmd_install, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+            
+            if proc.returncode != 0:
+                # Retry once if lock file error
+                if "Could not get lock" in proc.stderr:
+                    self.app.log("Apt locked. Retrying in 5s...")
+                    time.sleep(5)
+                    proc = subprocess.run(cmd_install, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+
+            if proc.returncode != 0:
+                self.app.log("Warning: Failed to install dependencies.")
+                self.app.log(f"--- APT ERROR LOG ---\n{proc.stderr}\n---------------------")
+            else:
+                self.app.log("Dependencies installed successfully.")
+
+        except Exception as e:
+             self.app.log(f"Critical Error executing apt-get: {e}")
+
     def check_and_download_layers(self):
         poky = self.app.poky_path.get()
         if not poky or not os.path.isdir(poky): return
@@ -39,7 +80,6 @@ class BuildManager:
         if self.app.active_manager:
             required_layers.extend(self.app.active_manager.get_required_layers())
             
-        # OTA Tab layers are dynamic (Mender OR RAUC)
         if hasattr(self.app.tab_ota, 'get_required_layers'):
              required_layers.extend(self.app.tab_ota.get_required_layers())
 
@@ -74,11 +114,16 @@ class BuildManager:
 
     def run_build(self, target=None):
         try:
-            # Call Setup Manager to sync configs
+            self.install_dependencies()
+
+            poky_path = self.app.poky_path.get()
+            user = self.app.sudo_user
+            if poky_path and user:
+                subprocess.run(["chown", "-R", f"{user}:{user}", poky_path], check=False)
+
             self.app.mgr_setup.regenerate_bblayers()
             self.check_and_download_layers()
             
-            # Call OTA Tab to fix issues (if applicable for Mender)
             needs_clean = False
             if hasattr(self.app.tab_ota, 'apply_mender_fixes'):
                 needs_clean = self.app.tab_ota.apply_mender_fixes()
@@ -94,7 +139,6 @@ class BuildManager:
                 
             self.exec_user_cmd(cmd)
 
-            # Hint for RAUC Bundle: If user just built the Image, remind them to build the Bundle
             if hasattr(self.app.tab_ota, 'ota_mode') and \
                self.app.tab_ota.ota_mode.get() == "RAUC" and target is None:
                 self.app.log("-" * 40)
@@ -107,6 +151,7 @@ class BuildManager:
 
     def run_clean(self):
         try:
+            self.install_dependencies()
             self.app.log("Cleaning...")
             self.exec_user_cmd(f"bitbake -c cleanall {self.app.tab_general.image_var.get()}")
         finally:
